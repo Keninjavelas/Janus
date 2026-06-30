@@ -1,0 +1,60 @@
+# configs/policy.yaml
+# JANUS DEMO POLICY - Test Region, Time, Device, and Risk Logic
+
+default:
+  kem: "ML-KEM-512"
+  hybrid_peer: "X25519Kyber768"
+  security_level: 3
+
+rules:
+  # 1. EU REGION - STRICT PRIVACY (Heavy Lock)
+  - name: "EU Strict Privacy"
+    match:
+      region: "EU"
+      risk_min: 3
+    config:
+      kem: "ML-KEM-1024"
+      sig: "ML-DSA-87"
+      security_level: 5
+
+  # 2. US REGION - BALANCED (Medium Lock)
+  - name: "US Balanced"
+    match:
+      region: "US"
+      risk_min: 2
+    config:
+      kem: "ML-KEM-768"
+      sig: "ML-DSA-65"
+      security_level: 3
+
+  # 3. ASIA PACIFIC (APAC) - LIGHTWEIGHT (Fast Lock)
+  - name: "APAC Lightweight"
+    match:
+      region: "APAC"
+    config:
+      kem: "ML-KEM-512"
+      sig: null
+      security_level: 1
+
+  # 4. IOT DEVICES AT NIGHT - ULTRA LIGHT (Save Battery)
+  - name: "IoT Night Mode"
+    match:
+      device_type: "iot"
+      time_from: "22:00"
+      time_to: "06:00"
+    config:
+      kem: "ML-KEM-512"
+      sig: null
+      security_level: 1
+
+  # 5. SERVERS DURING BUSINESS HOURS (High Security)
+  - name: "Server Business Hours"
+    match:
+      device_type: "server"
+      time_from: "09:00"
+      time_to: "17:00"
+      risk_min: 4
+    config:
+      kem: "ML-KEM-1024"
+      sig: "ML-DSA-87"
+      security_level: 5

@@ -1,0 +1,39 @@
+# deployments/kubernetes/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: janus-ingress
+  namespace: default
+  labels:
+    app: janus
+    component: ingress
+  annotations:
+    # Use nginx-ingress controller
+    kubernetes.io/ingress.class: nginx
+    # Enable SSL redirect
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Enable gRPC support
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    # Timeout for long-running crypto operations
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    # Optional: Rate limiting
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+    nginx.ingress.kubernetes.io/limit-whitelist: "127.0.0.1,10.0.0.0/8"
+spec:
+  tls:
+    - hosts:
+        - janus.yourdomain.com
+      secretName: janus-tls
+  rules:
+    - host: janus.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: janus-service
+                port:
+                  number: 50051

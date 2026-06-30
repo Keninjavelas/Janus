@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package pqcengine.v1;
+
+option go_package = "github.com/yourorg/janus/api/proto/v1;pb";
+
+message ContextRequest {
+  string scenario = 1;
+  int32 risk = 2; // 0-5 scale
+  double latency_budget_ms = 3;
+  int64 ram_kb = 4;
+  repeated string peer_algorithms = 5;
+  int32 key_rotation_hours = 6;
+  int32 cert_validity_days = 7;
+  bool execute_crypto = 8; // if true, perform actual KEM math
+  string region = 9;
+  string device_type = 10;
+}
+
+message AlgorithmConfig {
+  string kem = 1;
+  string sig = 2;
+  string hybrid_peer = 3;
+  int32 security_level = 4;
+}
+
+service PqcEngine {
+  rpc Evaluate (ContextRequest) returns (AlgorithmConfig) {}
+}
