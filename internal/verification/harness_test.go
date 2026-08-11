@@ -179,6 +179,24 @@ func TestCurveNamesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCurveIDsRejectOutOfScopeRuntimeGroups(t *testing.T) {
+	ids, err := CurveIDs([]string{"X25519", "X25519MLKEM768"})
+	if err != nil {
+		t.Fatalf("expected supported runtime groups to resolve, got %v", err)
+	}
+	if len(ids) != 2 || ids[0] != tls.X25519 || ids[1] != tls.X25519MLKEM768 {
+		t.Fatalf("unexpected supported runtime ids: %#v", ids)
+	}
+
+	if _, err := CurveIDs([]string{"SecP256r1MLKEM768"}); err == nil {
+		t.Fatal("expected out-of-scope runtime group to be rejected")
+	}
+
+	if observed := ObservedKeyExchange(tls.ConnectionState{CurveID: tls.CurveID(0xFE00)}); observed != "" {
+		t.Fatalf("expected unknown runtime curve to map to empty observation, got %q", observed)
+	}
+}
+
 func TestVerificationRequestRoundTrip(t *testing.T) {
 	req := VerificationRequest{
 		DecisionID:   "decision-1",
