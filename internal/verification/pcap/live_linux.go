@@ -6,26 +6,34 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"time"
 
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	gopcap "github.com/google/gopacket/pcap"
 	"github.com/google/gopacket/pcapgo"
 )
 
-func InspectLiveCapture(ctx context.Context, cfg LiveCaptureConfig) ([]FlowInspection, error) {
+const (
+	liveSnapLen     int32         = 65535
+	livePollTimeout time.Duration = 100 * time.Millisecond
+)
+
+func InspectLiveCapture(ctx context.Context, cfg LiveCaptureConfig) (LiveCaptureResult, error) {
 	if cfg.Interface == "" {
-		return nil, fmt.Errorf("live capture interface is required")
+		return LiveCaptureResult{}, fmt.Errorf("live capture interface is required")
 	}
 	if cfg.SnapLen == 0 {
-		cfg.SnapLen = 65535
+		cfg.SnapLen = liveSnapLen
 	}
 	if cfg.PollTimeout == 0 {
-		cfg.PollTimeout = 250 * time.Millisecond
+		cfg.PollTimeout = livePollTimeout
 	}
 
 	handle, err := gopcap.OpenLive(cfg.Interface, cfg.SnapLen, cfg.Promiscuous, cfg.PollTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("open live capture on %s: %w", cfg.Interface, err)
+		return LiveCaptureResult{}, fmt.Errorf("open live capture on %s: %w", cfg.Interface, err)
 	}
 	defer handle.Close()
 
@@ -34,53 +42,75 @@ func InspectLiveCapture(ctx context.Context, cfg LiveCaptureConfig) ([]FlowInspe
 		filter = fmt.Sprintf("tcp port %d", cfg.Port)
 	}
 	if err := handle.SetBPFFilter(filter); err != nil {
-		return nil, fmt.Errorf("apply capture filter %q: %w", filter, err)
+		return LiveCaptureResult{}, fmt.Errorf("apply capture filter %q: %w", filter, err)
 	}
 
 	var capture bytes.Buffer
 	writer := pcapgo.NewWriter(&capture)
 	if err := writer.WriteFileHeader(uint32(cfg.SnapLen), handle.LinkType()); err != nil {
-		return nil, fmt.Errorf("write in-memory pcap header: %w", err)
+		return LiveCaptureResult{}, fmt.Errorf("write in-memory pcap header: %w", err)
+	}
+	if err := signalCaptureReady(); err != nil {
+		return LiveCaptureResult{}, fmt.Errorf("signal capture readiness: %w", err)
 	}
 
+	packetStats := LiveCaptureDiagnostics{}
 	for {
 		data, ci, err := handle.ReadPacketData()
 		if err != nil {
 			if err == gopcap.NextErrorTimeoutExpired {
+				result, inspectErr := InspectCaptureDetailed(bytes.NewReader(capture.Bytes()), cfg.Port)
+				if inspectErr != nil {
+					return LiveCaptureResult{}, inspectErr
+				}
+				result.Diagnostics.Merge(packetStats)
 				select {
 				case <-ctx.Done():
-					return InspectCapture(bytes.NewReader(capture.Bytes()))
+					return result, nil
 				default:
 					continue
 				}
 			}
-			return nil, fmt.Errorf("read live packet: %w", err)
+			return LiveCaptureResult{}, fmt.Errorf("read live packet: %w", err)
+		}
+
+		packetStats.PacketsSeen++
+		packetStats.CaptureLength += ci.CaptureLength
+		packetStats.WireLength += ci.Length
+		if ci.CaptureLength < ci.Length {
+			packetStats.TruncatedPackets++
+		}
+
+		packet := gopacket.NewPacket(data, handle.LinkType(), gopacket.NoCopy)
+		if packet.Layer(layers.LayerTypeTCP) != nil {
+			packetStats.TCPPacketsSeen++
 		}
 
 		if err := writer.WritePacket(ci, data); err != nil {
-			return nil, fmt.Errorf("append captured packet: %w", err)
+			return LiveCaptureResult{}, fmt.Errorf("append captured packet: %w", err)
 		}
 
-		inspections, err := InspectCapture(bytes.NewReader(capture.Bytes()))
+		result, err := InspectCaptureDetailed(bytes.NewReader(capture.Bytes()), cfg.Port)
 		if err != nil {
-			return nil, err
+			return LiveCaptureResult{}, err
 		}
-		if hasTerminalServerFlow(inspections, cfg.Port) {
-			return inspections, nil
+		result.Diagnostics.Merge(packetStats)
+		if hasObservedServerFlow(result.Inspections, cfg.Port) {
+			return result, nil
 		}
 
 		select {
 		case <-ctx.Done():
-			return inspections, nil
+			return result, nil
 		default:
 		}
 	}
 }
 
-func hasTerminalServerFlow(inspections []FlowInspection, port uint16) bool {
+func hasObservedServerFlow(inspections []FlowInspection, port uint16) bool {
 	if port == 0 {
 		for _, inspection := range inspections {
-			if inspection.Status != StatusIgnored {
+			if inspection.Status == StatusObserved {
 				return true
 			}
 		}
@@ -88,9 +118,17 @@ func hasTerminalServerFlow(inspections []FlowInspection, port uint16) bool {
 	}
 
 	for _, inspection := range inspections {
-		if inspection.Flow.SrcPort == port && inspection.Status != StatusIgnored {
+		if inspection.Flow.SrcPort == port && inspection.Status == StatusObserved {
 			return true
 		}
 	}
 	return false
+}
+
+func signalCaptureReady() error {
+	readyPath := os.Getenv("JANUS_WIRE_READY_FILE")
+	if readyPath == "" {
+		return nil
+	}
+	return os.WriteFile(readyPath, []byte("JANUS_WIRE_READY\n"), 0600)
 }
