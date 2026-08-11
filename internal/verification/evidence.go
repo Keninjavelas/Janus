@@ -114,14 +114,10 @@ func ObservedKeyExchange(state tls.ConnectionState) string {
 		return "X25519MLKEM768"
 	case tls.X25519:
 		return "X25519"
-	case tls.SecP256r1MLKEM768:
-		return "SecP256r1MLKEM768"
-	case tls.SecP384r1MLKEM1024:
-		return "SecP384r1MLKEM1024"
 	case 0:
 		return ""
 	default:
-		return state.CurveID.String()
+		return ""
 	}
 }
 
@@ -151,10 +147,6 @@ func curveName(id tls.CurveID) string {
 		return "X25519MLKEM768"
 	case tls.X25519:
 		return "X25519"
-	case tls.SecP256r1MLKEM768:
-		return "SecP256r1MLKEM768"
-	case tls.SecP384r1MLKEM1024:
-		return "SecP384r1MLKEM1024"
 	default:
 		return id.String()
 	}
@@ -166,10 +158,6 @@ func curveID(name string) (tls.CurveID, error) {
 		return tls.X25519MLKEM768, nil
 	case "X25519":
 		return tls.X25519, nil
-	case "SecP256r1MLKEM768":
-		return tls.SecP256r1MLKEM768, nil
-	case "SecP384r1MLKEM1024":
-		return tls.SecP384r1MLKEM1024, nil
 	default:
 		return 0, fmt.Errorf("unsupported curve name: %s", name)
 	}
