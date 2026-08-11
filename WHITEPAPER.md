@@ -1,117 +1,93 @@
-# Janus – Enterprise White‑paper (Draft)
+# Janus - Research Platform Brief
 
-**Version:** 1.0 | **Date:** 2026‑06‑21
+**Version:** 1.1  
+**Date:** 2026-08-07
 
----
+## Executive summary
 
-## 1. Executive Summary
+Janus is a cloud-native research platform for adaptive post-quantum cryptographic policy. It evaluates contextual inputs and returns a recommended cryptographic posture, exposes those decisions over service APIs, and provides a dashboard for simulation, review, and observability.
 
-Janus is an **open‑source, production‑ready, zero‑trust‑aware post‑quantum decision engine** that maps contextual information (region, time‑of‑day, device type, risk level, etc.) to concrete PQ‑C (post‑quantum‑cryptography) algorithm choices. It provides:
+The central idea is crypto agility, not a claim that the repository already delivers full wire-level zero-trust enforcement. The current codebase demonstrates policy selection, control-plane plumbing, and PQC experimentation. The next milestone is to connect those decisions to protocol enforcement and independently verify the negotiated result.
 
-- **Dynamic, policy‑driven algorithm selection** – not a static TLS configuration.
-- **Hot‑reloadable policies** – edit a single YAML file; changes take effect instantly.
-- **Full observability** – Prometheus metrics, OpenTelemetry traces, and a Grafana dashboard out‑of‑the‑box.
-- **Seamless integration** – Envoy external‑authz filter, Wasm side‑car, and a gRPC service.
-- **Real PQC crypto execution** – liboqs‑backed KEM (ML‑KEM‑768/1024) for actual key‑exchange.
+## What Janus is today
 
-The combination of **policy flexibility**, **operational observability**, and **real cryptographic work** differentiates Janus from commercial “PQC‑as‑a‑service” offerings that are static and opaque.
+- A policy decision engine with hot-reloadable YAML rules
+- A gRPC and REST service for evaluation and management
+- A demo UI for simulation, metrics, and policy editing
+- An Envoy integration path that can propagate recommendations downstream
+- A liboqs-backed experimentation layer for `ML-KEM-*` operations
 
----
+## What Janus is not yet
 
-## 2. Architecture Diagram
+- A complete policy administrator and policy enforcement point
+- Proof that `X-PQC-Recommended` changed the negotiated handshake
+- A production-hardened PQC enforcement stack
+- A signed and tamper-evident policy distribution system
+- A cryptographic inventory or CBOM platform
 
-```
-+----------------+      +----------------+      +-------------------+
-|   Client(s)    | ---> |   Envoy + Wasm | ---> |   Janus gRPC      |
-| (any stack)    |      | (ext_authz)    |      | (decision engine) |
-+----------------+      +----------------+      +-------------------+
-        |                        |                     |
-        |                        |                     |
-        v                        v                     v
-   TLS Handshake          Header injection      KEM operation via
-   (TLS 1.3)              (X‑PQC‑Recommended)   liboqs (ML‑KEM‑768)
-```
+## Current architecture
 
-- **Envoy** runs as a side‑car or edge proxy. The TinyGo Wasm filter adds a header `X‑PQC‑Recommended` that downstream services can use to select a PQC algorithm.
-- **Janus gRPC** evaluates the request context against `configs/policy.yaml` and returns a decision payload (algorithm, confidence, etc.).
-- **Observability stack**: Prometheus scrapes `/metrics`; Grafana visualises decision throughput, latency percentiles, cache hit‑rate, crypto execution success, and algorithm distribution.
-- **Kubernetes**: Deployments, Services, HPA, and Ingress provide autoscaling, TLS termination, and zero‑downtime policy updates.
-
----
-
-## 3. Feature Matrix vs. Competitors
-
-| Feature                         | Janus (Open‑source) | Cloudflare PQC Edge | Google ALTS | Agnostic Cyber PQC Toolkit | SandboxAQ Enterprise |
-|--------------------------------|---------------------|----------------------|-------------|-----------------------------|----------------------|
-| **Policy‑driven selection**   | ✅ (custom YAML)    | ❌ (static)          | ❌ (static) | ✅ (configuration)          | ✅ (configurable)    |
-| **Hot‑reload without restart**| ✅ (fsnotify)       | ❌ (requires redeploy) | ❌          | ❌                           | ❌                    |
-| **Context awareness** (region, time, device) | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Real PQC crypto execution** | ✅ (liboqs)          | ✅ (TLS 1.3 + KEM)   | ✅ (experimental) | ✅ (library) | ✅ (full stack) |
-| **Observability** (metrics, tracing, logs) | ✅ (Prometheus, OTEL) | Limited (Cloudflare analytics) | Limited | Minimal | Full (custom) |
-| **Deployable on‑prem / cloud** | ✅ (K8s, Docker)    | ❌ (cloud only)      | ✅ (GCP)    | ✅ (any)                    | ✅ (any) |
-| **Open‑source license**        | Apache‑2.0          | Proprietary          | Proprietary | Proprietary                 | Proprietary |
-
----
-
-## 4. Performance Benchmarks (v1.2.0)
-
-All benchmarks were run on a **GKE Standard cluster** (n1‑standard‑4 nodes, 3 nodes) with **10 000 concurrent gRPC requests** using `hey`. Results are averaged over three runs.
-
-| Metric                              | Value (Cold Cache) | Value (Warm Cache) |
-|------------------------------------|--------------------|--------------------|
-| **Throughput**                     | 9 800 req/s        | 12 500 req/s       |
-| **p99 latency**                    | 3.8 ms             | 1.2 ms             |
-| **CPU usage (total)**               | 68 %               | 55 %               |
-| **Memory usage (Janus pod)**        | 420 MiB            | 380 MiB            |
-| **Cache hit‑rate**                  | 0 % (cold)         | 92 %               |
-| **Crypto execution time (KEM)**    | 0.9 ms per op      | 0.8 ms per op      |
-
-> **Note:** The warm‑cache numbers include the LRU decision cache (Feature 5) and the liboqs KEM cache (internal). The system scales linearly up to 10 000 RPS; beyond that the HPA adds additional pods automatically.
-
----
-
-## 5. Security Model & Guarantees
-
-1. **Input Validation** – All incoming gRPC requests are validated against a protobuf schema. Unknown fields are rejected.
-2. **Policy Integrity** – `policy.yaml` is loaded from a ConfigMap mounted read‑only. Only cluster administrators with `edit` permissions can modify it, ensuring a trusted source of truth.
-3. **Decision Auditing** – Every decision is logged (JSON via `zerolog`) with:
-   - `trace_id` (if present) – correlates with OpenTelemetry span.
-   - Full request context (scenario, risk, region, device, timestamp).
-   - Chosen algorithm and decision timestamp.
-4. **Tamper‑Resistance** – The Wasm filter runs in an isolated sandbox; it cannot alter the underlying Janus service.
-5. **Side‑Channel Mitigation** – liboqs is compiled with constant‑time primitives; the KEM operation is performed inside a dedicated worker pool to limit timing leakage.
-
----
-
-## 6. Deployment Quick‑Start (Zero‑Touch)
-
-```bash
-# 1️⃣ Clone repository
-git clone https://github.com/yourorg/janus.git && cd janus
-
-# 2️⃣ Deploy to GCP (or adapt for AWS/Azure)
-./scripts/deploy.sh --cloud=gcp --project=my‑gcp‑project --region=us-central1
+```text
+Client
+  -> Envoy/ext_authz
+  -> Janus gRPC decision engine
+  -> decision payload
+  -> downstream advisory handling
 ```
 
-The script creates a GKE cluster (if needed), installs Prometheus‑Operator, applies all Janus manifests (deployment, HPA, Ingress, ServiceMonitor), and deploys the Envoy+Wasm side‑car.
+This is useful for experimentation, but it is not enough to claim verified post-quantum enforcement.
 
----
+## Target architecture
 
-## 7. Roadmap (next 12 months)
+```text
+Identity, posture, sensitivity, lifetime, risk, capability
+  -> Janus policy engine
+  -> signed policy decision
+  -> policy administrator
+  -> TLS or mTLS enforcement layer
+  -> negotiated cryptographic posture
+  -> independent verification
+  -> downgrade detection, audit, migration tracking
+```
 
-| Quarter | Milestone |
-|---------|-----------|
-| Q3‑2026 | Full TLS‑terminator integration – Janus directly negotiates TLS 1.3 with KEM cipher suites. |
-| Q4‑2026 | Multi‑cloud support (AWS EKS, Azure AKS) in `deploy.sh`. |
-| Q1‑2027 | Policy‑as‑Code – CI pipeline validates `policy.yaml` against a formal security model. |
-| Q2‑2027 | Enterprise support program – SLAs, professional services, and managed SaaS offering. |
+## Security boundaries
 
----
+### Advisory versus enforcement
 
-## 8. Conclusion
+The current Wasm path injects advisory metadata. That metadata can help downstream systems reason about policy intent, but it does not itself prove cryptographic negotiation.
 
-Janus bridges the gap between **policy‑driven decision making** and **real cryptographic execution** while delivering **observability** and **operational simplicity**. It is an ideal foundation for organizations that need to **future‑proof their zero‑trust architectures** against quantum threats, without sacrificing flexibility or control.
+### AI assistance
 
----
+The AI feature is intentionally limited to drafting YAML. Human review in the policy editor is required before a policy is applied.
 
-*Prepared by the Janus core team – built with Go 1.22+, gRPC, OpenTelemetry, Prometheus, liboqs, Envoy, and TinyGo.*
+### Standards naming
+
+This repository now uses standardized names such as `ML-KEM-768`, `ML-DSA-65`, and `X25519MLKEM768` in public-facing docs and examples. Where the current `liboqs-go` binding still expects legacy identifiers internally, Janus translates them in code.
+
+## Recommended engineering priorities
+
+1. Close `v0.3` with authoritative Linux CI evidence for the enforcement and verification slice.
+2. Move from direct subprocess TLS observation to deployment-boundary attestation in `v0.4`.
+3. Sign and version policies, then simulate and review before rollout.
+4. Replace simplified attributes with stronger identity and posture sources.
+5. Add cryptographic discovery, CBOM generation, and migration planning.
+6. Strengthen cache invalidation and failure semantics.
+
+## Evaluation plan
+
+Strong future evaluation should answer:
+
+- What overhead does adaptive cryptographic policy introduce?
+- Can Janus detect and block downgrade from hybrid to classical modes?
+- How quickly can policy changes respond to algorithm deprecation?
+- How accurately can Janus identify high-priority migration targets?
+- Which compatibility and latency tradeoffs appear under different postures?
+
+## Operational status
+
+Janus should currently be presented as a production-oriented research platform and reference implementation, not as a finished production system.
+
+## Related documents
+
+- [README.md](C:\Users\aryan\OneDrive\Desktop\Janus\README.md)
+- [THREAT_MODEL.md](C:\Users\aryan\OneDrive\Desktop\Janus\THREAT_MODEL.md)

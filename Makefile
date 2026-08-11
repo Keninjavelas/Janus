@@ -1,42 +1,62 @@
 # Makefile
 
 # -------------------------------------------------
-# Build & Development tasks for PQC‑ZTA Engine
+# Build & Development tasks for Janus
 # -------------------------------------------------
 
-# Binary output directory
 BIN_DIR := bin
 BIN := $(BIN_DIR)/pqc-engine
+MAINPKG := ./cmd/pq-engine
 
-# Go source entry point (assumes cmd/main.go exists)
-MAINPkg := ./cmd
-
-.PHONY: all build run test lint docker clean
+.PHONY: all build run test test-core test-cache test-wire-live test-liboqs test-envoy test-integration test-benchmark lint docker clean
 
 all: build
 
 build:
 	@mkdir -p $(BIN_DIR)
-	go build -o $(BIN) $(MAINPkg)
+	go build -o $(BIN) $(MAINPKG)
 
 run: build
 	$(BIN)
 
-# Run unit & integration tests
-# -cover generates coverage data
-# -race enables the race detector
-# Adjust packages as needed.
-
 test:
-	go test -v -cover -race ./... 
+	$(MAKE) test-core
 
-# Lint using golangci-lint (install with `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`)
+# Host-safe default test surface.
+# This excludes packages that currently require:
+# - liboqs system libraries
+# - Envoy-specific compatibility work
+# - integration-only infrastructure or build tags
+# - separate cache-test execution on this Windows host
+test-core:
+	go test -v -cover -race ./api/proto/v1 ./api/proto/v1/api/proto/v1 ./cmd/pq-engine ./cmd/tls-verifier ./internal/api ./internal/config ./internal/engine ./internal/fallback ./internal/metrics ./internal/orchestrator ./internal/server ./internal/tracing ./internal/verification
+
+# Run cache regression tests separately.
+# CI on Linux should be treated as the source of truth for this target.
+test-cache:
+	go test -v -cover ./internal/cache
+
+# Run Linux-only live wire-capture tests explicitly.
+test-wire-live:
+	go test -tags=livecapture -v ./internal/verification -run TestLiveWireVerification
+
+# Run liboqs-backed packages explicitly.
+test-liboqs:
+	go test -tags=liboqs -v ./internal/crypto
+
+# Run Envoy-specific packages explicitly.
+test-envoy:
+	go test -tags=envoy -v ./internal/envoy
+
+# Run integration tests explicitly.
+test-integration:
+	go test -tags=integration -v ./pqc-zta-engine/test/integration
+
+test-benchmark:
+	go test -run=^$$ -bench=. ./pqc-zta-engine/test/benchmark
+
 lint:
-	golangci-lint run ./... 
-
-# Build the multi‑stage Docker image (requires Docker daemon)
-# Image name is configurable via the IMAGE env var.
-# Example: make docker IMAGE=myrepo/pqc-zta-engine:latest
+	golangci-lint run ./...
 
 docker:
 	docker build -t $${IMAGE:-pqc-zta-engine:latest} .

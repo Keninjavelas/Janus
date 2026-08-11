@@ -1,7 +1,7 @@
 # Dockerfile
 
 # ---------- Build stage ----------
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /app
 
 # Cache go.mod and go.sum for faster builds
@@ -12,7 +12,7 @@ RUN go mod download
 COPY . ./
 
 # Build the binary (static linking for minimal image)
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /pqc-engine ./cmd
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /pqc-engine ./cmd/pq-engine
 
 # ---------- Runtime stage ----------
 FROM alpine:3.20

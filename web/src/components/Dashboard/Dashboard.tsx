@@ -36,7 +36,7 @@ export function Dashboard() {
     );
   }
 
-  const algorithmData = Object.entries(metrics.algorithm_usage).map(([name, count]) => ({
+  const algorithmData = Object.entries(metrics.algorithm_counts).map(([name, count]) => ({
     name,
     count,
   }));
