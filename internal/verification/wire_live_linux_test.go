@@ -210,6 +210,7 @@ func runLiveWireScenario(t *testing.T, scenario liveWireScenario) VerificationOu
 
 	iface := mustLoopbackInterface(t)
 	addrFile := filepath.Join(t.TempDir(), "server-addr.txt")
+	readyFile := filepath.Join(t.TempDir(), "wire-ready.txt")
 
 	serverCmd, serverStderr := startHelperProcess(t, "GO_WANT_JANUS_WIRE_SERVER_HELPER", []string{
 		"JANUS_SERVER_ADDR_FILE=" + addrFile,
@@ -239,7 +240,10 @@ func runLiveWireScenario(t *testing.T, scenario liveWireScenario) VerificationOu
 	}
 
 	verifierCmd := exec.Command(exe, "-test.run=TestWireLiveVerifierHelperProcess")
-	verifierCmd.Env = append(os.Environ(), "GO_WANT_JANUS_WIRE_VERIFIER_HELPER=1")
+	verifierCmd.Env = append(os.Environ(),
+		"GO_WANT_JANUS_WIRE_VERIFIER_HELPER=1",
+		"JANUS_WIRE_READY_FILE="+readyFile,
+	)
 	verifierCmd.Stdin = bytes.NewReader(payload)
 	var verifierStdout bytes.Buffer
 	var verifierStderr bytes.Buffer
@@ -249,7 +253,7 @@ func runLiveWireScenario(t *testing.T, scenario liveWireScenario) VerificationOu
 		t.Fatalf("start verifier helper: %v", err)
 	}
 
-	time.Sleep(300 * time.Millisecond)
+	waitForReadySignal(t, readyFile)
 
 	clientCmd, clientStderr := startHelperProcess(t, "GO_WANT_JANUS_WIRE_CLIENT_HELPER", []string{
 		"JANUS_TARGET_ADDR=" + address,
@@ -347,6 +351,20 @@ func waitForServerAddress(t *testing.T, path string) string {
 	}
 	t.Fatalf("timed out waiting for server address in %s", path)
 	return ""
+}
+
+func waitForReadySignal(t *testing.T, path string) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil && bytes.Contains(data, []byte("JANUS_WIRE_READY")) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for verifier readiness signal in %s", path)
 }
 
 func helperCurveIDs() ([]tls.CurveID, error) {

@@ -30,19 +30,22 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 		Port:        port,
 		SnapLen:     65535,
 		Promiscuous: false,
-		PollTimeout: 250 * time.Millisecond,
+		PollTimeout: 100 * time.Millisecond,
 	})
 	if err != nil {
 		return wireUnverifiedOutcome(req, err.Error()), nil
 	}
 
-	inspection, found := selectWireInspection(inspections, port)
+	inspection, found := selectWireInspection(inspections.Inspections, port)
 	if !found {
-		return wireUnverifiedOutcome(req, "no tls server hello observed before capture ended"), nil
+		return wireUnverifiedOutcome(req, withLiveCaptureDiagnostics("no tls server hello observed before capture ended", inspections.Diagnostics)), nil
 	}
 
 	observed := ""
 	detail := inspection.Detail
+	if inspection.Status == pcapverify.StatusUnverified {
+		detail = withLiveCaptureDiagnostics(detail, inspections.Diagnostics)
+	}
 	evidence := BuildEvidence(req.Required, req.DecisionID, observed, "janus-wire-verifier", req.ConnectionID, nil, detail, time.Now())
 	evidence.ObservationLevel = "WIRE_LIVE"
 	evidence.CaptureInterface = req.ObservationInterface
@@ -107,4 +110,8 @@ func wireUnverifiedOutcome(req VerificationRequest, detail string) VerificationO
 	evidence.CaptureInterface = req.ObservationInterface
 	evidence.ApplicationAccess = AccessDenied
 	return VerificationOutcome{Evidence: evidence}
+}
+
+func withLiveCaptureDiagnostics(detail string, diagnostics pcapverify.LiveCaptureDiagnostics) string {
+	return fmt.Sprintf("%s; live capture diagnostics: %s", detail, diagnostics.String())
 }

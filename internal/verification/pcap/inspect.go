@@ -25,16 +25,39 @@ type FlowInspection struct {
 }
 
 func InspectCapture(r io.Reader) ([]FlowInspection, error) {
-	flows, err := ReadTCPFlows(r)
+	result, err := InspectCaptureDetailed(r, 0)
 	if err != nil {
 		return nil, err
 	}
+	return result.Inspections, nil
+}
 
-	inspections := make([]FlowInspection, 0, len(flows))
-	for _, flow := range flows {
-		inspections = append(inspections, inspectFlow(flow))
+func InspectCaptureDetailed(r io.Reader, serverPort uint16) (LiveCaptureResult, error) {
+	flows, err := ReadTCPFlows(r)
+	if err != nil {
+		return LiveCaptureResult{}, err
 	}
-	return inspections, nil
+
+	result := LiveCaptureResult{
+		Inspections: make([]FlowInspection, 0, len(flows)),
+	}
+	result.Diagnostics.FlowsSeen = len(flows)
+	for _, flow := range flows {
+		if errors.Is(flow.ReassemblyError, ErrMissingTCPData) {
+			result.Diagnostics.ReassemblyGap++
+		}
+		if errors.Is(flow.ReassemblyError, ErrAmbiguousTCPOverlap) {
+			result.Diagnostics.ReassemblyConflict++
+		}
+		if serverPort == 0 || flow.Key.SrcPort == serverPort {
+			result.Diagnostics.ServerPayloadBytes += len(flow.Bytes)
+			recordsSeen, serverHelloCandidates := countTLSDiagnostics(flow.Bytes)
+			result.Diagnostics.TLSRecordsSeen += recordsSeen
+			result.Diagnostics.ServerHelloCandidates += serverHelloCandidates
+		}
+		result.Inspections = append(result.Inspections, inspectFlow(flow))
+	}
+	return result, nil
 }
 
 func inspectFlow(flow Flow) FlowInspection {
@@ -123,4 +146,42 @@ func looksLikeTLS(data []byte) bool {
 
 	version := binary.BigEndian.Uint16(data[1:3])
 	return version == 0x0301 || version == 0x0302 || version == 0x0303 || version == 0x0304
+}
+
+func countTLSDiagnostics(data []byte) (int, int) {
+	if !looksLikeTLS(data) {
+		return 0, 0
+	}
+
+	recordsSeen := 0
+	serverHelloCandidates := 0
+	offset := 0
+	for offset+5 <= len(data) {
+		recordLength := int(binary.BigEndian.Uint16(data[offset+3 : offset+5]))
+		recordEnd := offset + 5 + recordLength
+		if recordEnd > len(data) {
+			break
+		}
+
+		recordsSeen++
+		if data[offset] == 22 {
+			payload := data[offset+5 : recordEnd]
+			handshakeOffset := 0
+			for handshakeOffset+4 <= len(payload) {
+				handshakeLength := int(payload[handshakeOffset+1])<<16 | int(payload[handshakeOffset+2])<<8 | int(payload[handshakeOffset+3])
+				handshakeEnd := handshakeOffset + 4 + handshakeLength
+				if handshakeEnd > len(payload) {
+					break
+				}
+				if payload[handshakeOffset] == 2 {
+					serverHelloCandidates++
+				}
+				handshakeOffset = handshakeEnd
+			}
+		}
+
+		offset = recordEnd
+	}
+
+	return recordsSeen, serverHelloCandidates
 }
