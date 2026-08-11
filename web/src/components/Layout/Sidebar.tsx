@@ -5,7 +5,7 @@ const navigation = [
   { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
   { id: 'simulator', name: 'Request Simulator', icon: Play },
   { id: 'policy', name: 'Policy Editor', icon: FileCode },
-  { id: 'ai', name: 'AI Co-Pilot', icon: Bot },
+  { id: 'ai', name: 'Policy Assistant', icon: Bot },
 ];
 
 export function Sidebar() {

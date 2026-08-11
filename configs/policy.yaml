@@ -1,13 +1,14 @@
 # configs/policy.yaml
-# JANUS DEMO POLICY - Test Region, Time, Device, and Risk Logic
+# Janus demo policy.
+# These rules are illustrative inputs for the policy engine, not a production baseline.
 
 default:
-  kem: "ML-KEM-512"
-  hybrid_peer: "X25519Kyber768"
+  kem: "ML-KEM-768"
+  hybrid_peer: "X25519MLKEM768"
   security_level: 3
 
 rules:
-  # 1. EU REGION - STRICT PRIVACY (Heavy Lock)
+  # 1. EU region demo rule
   - name: "EU Strict Privacy"
     match:
       region: "EU"
@@ -17,7 +18,7 @@ rules:
       sig: "ML-DSA-87"
       security_level: 5
 
-  # 2. US REGION - BALANCED (Medium Lock)
+  # 2. US region demo rule
   - name: "US Balanced"
     match:
       region: "US"
@@ -27,7 +28,7 @@ rules:
       sig: "ML-DSA-65"
       security_level: 3
 
-  # 3. ASIA PACIFIC (APAC) - LIGHTWEIGHT (Fast Lock)
+  # 3. APAC demo rule
   - name: "APAC Lightweight"
     match:
       region: "APAC"
@@ -36,7 +37,7 @@ rules:
       sig: null
       security_level: 1
 
-  # 4. IOT DEVICES AT NIGHT - ULTRA LIGHT (Save Battery)
+  # 4. IoT demo rule
   - name: "IoT Night Mode"
     match:
       device_type: "iot"
@@ -47,7 +48,7 @@ rules:
       sig: null
       security_level: 1
 
-  # 5. SERVERS DURING BUSINESS HOURS (High Security)
+  # 5. Server demo rule
   - name: "Server Business Hours"
     match:
       device_type: "server"

@@ -13,7 +13,8 @@ export function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: 'Hello! I\'m your Janus AI Co-Pilot. Tell me what cryptographic policy you need, and I\'ll generate the YAML for you. For example: "Protect EU traffic more strictly" or "Make IoT devices use weaker algorithms at night".',
+      content:
+        'Hello. I am the Janus Policy Assistant. Describe the posture you want, and I will draft YAML for review in the Policy Editor. Example: "Protect EU traffic more strictly" or "Require stronger posture for high-risk IoT traffic".',
     },
   ]);
   const [input, setInput] = useState('');
@@ -32,37 +33,38 @@ export function ChatInterface() {
 
     try {
       const yaml = await janusAPI.generateYAML(input);
-      
+
       const assistantMessage: Message = {
         role: 'assistant',
-        content: `I've generated the following YAML based on your request:\n\n\`\`\`yaml\n${yaml}\n\`\`\`\n\nWould you like me to apply this policy?`,
+        content: `I drafted the following YAML based on your request:\n\n\`\`\`yaml\n${yaml}\n\`\`\`\n\nReview it in the Policy Editor before applying it.`,
       };
       setMessages((prev) => [...prev, assistantMessage]);
-      
-      // Store the generated YAML for potential application
       setPolicy(yaml);
     } catch (error) {
       const errorMessage: Message = {
         role: 'assistant',
-        content: 'Sorry, I encountered an error generating the YAML. Please try again.',
+        content: 'Sorry, I encountered an error generating draft YAML. Please try again.',
       };
       setMessages((prev) => [...prev, errorMessage]);
-      toast.error('Failed to generate policy');
+      toast.error('Failed to generate policy draft');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleApplyPolicy = async () => {
+  const handleReviewPolicy = async () => {
     try {
       setLoading(true);
-      await janusAPI.updatePolicy(messages[messages.length - 1].content.match(/```yaml\n([\s\S]*?)\n```/)?.[1] || '');
-      setMessages((prev) => [...prev, { role: 'assistant', content: 'Policy applied successfully! Check the Policy Editor to see the changes.' }]);
-      toast.success('Policy applied successfully!');
       setCurrentView('policy');
-    } catch (error) {
-      setMessages((prev) => [...prev, { role: 'assistant', content: 'Failed to apply policy. Please try again.' }]);
-      toast.error('Failed to apply policy');
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content:
+            'Draft moved to the Policy Editor for review. Apply it there once you are satisfied with the changes.',
+        },
+      ]);
+      toast.success('Draft opened in Policy Editor');
     } finally {
       setLoading(false);
     }
@@ -71,8 +73,10 @@ export function ChatInterface() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">AI Co-Pilot</h2>
-        <p className="text-gray-600">Generate cryptographic policies using natural language</p>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">Policy Assistant</h2>
+        <p className="text-gray-600">
+          Draft cryptographic policies using natural language, then review them before applying
+        </p>
       </div>
 
       <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
@@ -101,13 +105,13 @@ export function ChatInterface() {
                       {message.content.match(/```yaml\n([\s\S]*?)\n```/)?.[1]}
                     </pre>
                     <p>{message.content.split('```')[2]}</p>
-                    {index === messages.length - 1 && message.role === 'assistant' && (
+                    {index === messages.length - 1 && (
                       <button
-                        onClick={handleApplyPolicy}
+                        onClick={handleReviewPolicy}
                         className="mt-2 flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm"
                       >
                         <Sparkles className="w-4 h-4" />
-                        Apply This Policy
+                        Review In Policy Editor
                       </button>
                     )}
                   </div>

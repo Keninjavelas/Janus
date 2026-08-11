@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0
 	github.com/fsnotify/fsnotify v1.7.0
+	github.com/google/gopacket v1.1.19
 	github.com/gorilla/mux v1.8.1
 	github.com/hashicorp/golang-lru v0.5.4
 	github.com/open-quantum-safe/liboqs-go v0.0.0-20260310140033-75451133b94a

@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  go-core:
+    name: Go Core Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run host-safe core tests
+        run: make test
+
+  go-v03-verification:
+    name: v0.3 Verification Slice
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run verifier package tests
+        run: go test ./internal/verification -v
+
+      - name: Compile verifier command
+        run: go test ./cmd/tls-verifier -v
+
+  go-v04-wire-live:
+    name: v0.4 Live Wire Slice
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install libpcap
+        run: sudo apt-get update && sudo apt-get install -y libpcap-dev
+
+      - name: Run live wire verification tests
+        run: sudo env "PATH=$PATH" go test -tags=livecapture ./internal/verification -run TestLiveWireVerification -v
+
+      - name: Compile live wire verifier command
+        run: go test -tags=livecapture ./cmd/janus-wire-verifier -v
+
+  go-cache:
+    name: Go Cache Regression
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run cache regression tests
+        run: make test-cache
+
+  web-build:
+    name: Web Build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
