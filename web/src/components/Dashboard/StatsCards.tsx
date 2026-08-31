@@ -1,51 +1,29 @@
-// web/src/components/Dashboard/StatsCards.tsx
-import React, { useEffect, useState } from 'react';
-import { janusAPI, type Metrics } from '../../services/janusService';
+import type { Metrics } from '../../services/janusService';
 
-export const StatsCards: React.FC = () => {
-  const [metrics, setMetrics] = useState<Metrics | null>(null);
-  const [loading, setLoading] = useState(true);
+interface StatsCardsProps {
+  metrics: Metrics;
+}
 
-  const fetchMetrics = async () => {
-    try {
-      const data = await janusAPI.getMetrics();
-      setMetrics(data);
-    } catch (err) {
-      console.error('Failed to fetch metrics:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchMetrics();
-    const interval = setInterval(fetchMetrics, 5000); // Poll every 5 seconds
-    return () => clearInterval(interval);
-  }, []);
-
-  if (loading) {
-    return <div className="text-center py-4">Loading metrics...</div>;
-  }
-
-  if (!metrics) {
-    return <div className="text-center py-4 text-red-500">Failed to load metrics</div>;
-  }
-
+export function StatsCards({ metrics }: StatsCardsProps) {
   const cards = [
-    { label: 'Total Decisions', value: metrics.total_decisions.toLocaleString() },
-    { label: 'Cache Hit Rate', value: `${(metrics.cache_hit_rate * 100).toFixed(1)}%` },
-    { label: 'Avg Latency', value: `${metrics.avg_latency_ms.toFixed(2)}ms` },
-    { label: 'P99 Latency', value: `${metrics.p99_latency_ms.toFixed(2)}ms` },
+    { label: 'Decisions', value: metrics.total_decisions.toLocaleString(), tone: 'text-stone-900' },
+    { label: 'Assets', value: metrics.total_assets.toLocaleString(), tone: 'text-stone-900' },
+    { label: 'Cache Hit Rate', value: `${(metrics.cache_hit_rate * 100).toFixed(1)}%`, tone: 'text-sky-700' },
+    { label: 'P99 Latency', value: `${metrics.p99_latency_ms.toFixed(2)} ms`, tone: 'text-amber-700' },
+    { label: 'P0', value: String(metrics.migration_priority_counts.P0 ?? 0), tone: 'text-rose-700' },
+    { label: 'P1', value: String(metrics.migration_priority_counts.P1 ?? 0), tone: 'text-orange-700' },
+    { label: 'P2', value: String(metrics.migration_priority_counts.P2 ?? 0), tone: 'text-sky-700' },
+    { label: 'P3', value: String(metrics.migration_priority_counts.P3 ?? 0), tone: 'text-emerald-700' },
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      {cards.map((card, idx) => (
-        <div key={idx} className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-          <p className="text-sm text-gray-500 dark:text-gray-400">{card.label}</p>
-          <p className="text-2xl font-bold">{card.value}</p>
+    <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+      {cards.map((card) => (
+        <div key={card.label} className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">{card.label}</p>
+          <p className={`mt-3 text-3xl font-semibold ${card.tone}`}>{card.value}</p>
         </div>
       ))}
     </div>
   );
-};
+}

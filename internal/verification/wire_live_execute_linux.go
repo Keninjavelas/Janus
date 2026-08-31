@@ -9,8 +9,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/yourorg/janus/internal/verification/attribution"
 	pcapverify "github.com/yourorg/janus/internal/verification/pcap"
 )
+
+var resolveLocalFlowAttribution = attribution.ResolveLocalSourceOwner
 
 func executeWireVerification(ctx context.Context, req VerificationRequest) (VerificationOutcome, error) {
 	port, err := targetPort(req.TargetAddress)
@@ -41,30 +44,7 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 		return wireUnverifiedOutcome(req, withLiveCaptureDiagnostics("no tls server hello observed before capture ended", inspections.Diagnostics)), nil
 	}
 
-	observed := ""
-	detail := inspection.Detail
-	if inspection.Status == pcapverify.StatusUnverified {
-		detail = withLiveCaptureDiagnostics(detail, inspections.Diagnostics)
-	}
-	evidence := BuildEvidence(req.Required, req.DecisionID, observed, "janus-wire-verifier", req.ConnectionID, nil, detail, time.Now())
-	evidence.ObservationLevel = "WIRE_LIVE"
-	evidence.CaptureInterface = req.ObservationInterface
-	evidence.Flow = &FlowMetadata{
-		Src: fmt.Sprintf("%s:%d", inspection.Flow.SrcIP, inspection.Flow.SrcPort),
-		Dst: fmt.Sprintf("%s:%d", inspection.Flow.DstIP, inspection.Flow.DstPort),
-	}
-
-	if inspection.Observation != nil {
-		observed = inspection.Observation.GroupName
-		evidence = BuildEvidence(req.Required, req.DecisionID, observed, "janus-wire-verifier", req.ConnectionID, nil, detail, time.Now())
-		evidence.ObservationLevel = "WIRE_LIVE"
-		evidence.CaptureInterface = req.ObservationInterface
-		evidence.Flow = &FlowMetadata{
-			Src: fmt.Sprintf("%s:%d", inspection.Flow.SrcIP, inspection.Flow.SrcPort),
-			Dst: fmt.Sprintf("%s:%d", inspection.Flow.DstIP, inspection.Flow.DstPort),
-		}
-		evidence.TLSVersion = inspection.Observation.TLSVersion
-	}
+	evidence := buildWireLiveEvidence(req, inspection, inspections.Diagnostics)
 
 	if evidence.Status == Compliant {
 		evidence.ApplicationAccess = AccessAllowed
@@ -73,6 +53,49 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 	}
 
 	return VerificationOutcome{Evidence: evidence}, nil
+}
+
+func buildWireLiveEvidence(req VerificationRequest, inspection pcapverify.FlowInspection, diagnostics pcapverify.LiveCaptureDiagnostics) VerificationEvidence {
+	observed := ""
+	detail := inspection.Detail
+	if inspection.Status == pcapverify.StatusUnverified {
+		detail = withLiveCaptureDiagnostics(detail, diagnostics)
+	}
+	if inspection.Observation != nil {
+		observed = inspection.Observation.GroupName
+	}
+
+	evidence := BuildEvidence(req.Required, req.DecisionID, observed, "janus-wire-verifier", req.ConnectionID, nil, detail, time.Now())
+	evidence.ObservationLevel = "WIRE_LIVE"
+	evidence.CaptureInterface = req.ObservationInterface
+	evidence.Flow = &FlowMetadata{
+		Src: fmt.Sprintf("%s:%d", inspection.Flow.SrcIP, inspection.Flow.SrcPort),
+		Dst: fmt.Sprintf("%s:%d", inspection.Flow.DstIP, inspection.Flow.DstPort),
+	}
+	if inspection.Observation != nil {
+		evidence.TLSVersion = inspection.Observation.TLSVersion
+	}
+
+	attachWireFlowAttribution(&evidence, inspection.Flow)
+	return evidence
+}
+
+func attachWireFlowAttribution(evidence *VerificationEvidence, flow pcapverify.FlowKey) {
+	result, err := resolveLocalFlowAttribution(attribution.Flow{
+		SrcIP:   flow.SrcIP,
+		SrcPort: flow.SrcPort,
+		DstIP:   flow.DstIP,
+		DstPort: flow.DstPort,
+	})
+	if err != nil {
+		if result.Status == "" {
+			result.Status = attribution.Unattributed
+		}
+		if result.Detail == "" {
+			result.Detail = err.Error()
+		}
+	}
+	ApplyAttributionResult(evidence, result)
 }
 
 func targetPort(address string) (uint16, error) {

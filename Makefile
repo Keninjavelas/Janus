@@ -8,7 +8,7 @@ BIN_DIR := bin
 BIN := $(BIN_DIR)/pqc-engine
 MAINPKG := ./cmd/pq-engine
 
-.PHONY: all build run test test-core test-cache test-wire-live test-liboqs test-envoy test-integration test-benchmark lint docker clean
+.PHONY: all build run test test-core test-cache test-wire-live test-liboqs test-envoy test-integration test-benchmark benchmark lint docker clean
 
 all: build
 
@@ -29,7 +29,7 @@ test:
 # - integration-only infrastructure or build tags
 # - separate cache-test execution on this Windows host
 test-core:
-	go test -v -cover -race ./api/proto/v1 ./api/proto/v1/api/proto/v1 ./cmd/pq-engine ./cmd/tls-verifier ./internal/api ./internal/config ./internal/engine ./internal/fallback ./internal/metrics ./internal/orchestrator ./internal/server ./internal/tracing ./internal/verification
+	go test -v -cover -race ./api/proto/v1 ./api/proto/v1/api/proto/v1 ./cmd/pq-engine ./cmd/tls-verifier ./cmd/janus-wire-verifier ./internal/algorithms ./internal/api ./internal/audit ./internal/config ./internal/discovery ./internal/engine ./internal/fallback ./internal/metrics ./internal/migration ./internal/orchestrator ./internal/risk ./internal/server ./internal/tracing ./internal/verification
 
 # Run cache regression tests separately.
 # CI on Linux should be treated as the source of truth for this target.
@@ -54,6 +54,9 @@ test-integration:
 
 test-benchmark:
 	go test -run=^$$ -bench=. ./pqc-zta-engine/test/benchmark
+
+benchmark:
+	go test -run=^$$ -bench=. ./internal/benchmarks ./pqc-zta-engine/test/benchmark
 
 lint:
 	golangci-lint run ./...

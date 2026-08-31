@@ -1,165 +1,122 @@
-# Janus - Adaptive Post-Quantum Crypto-Agility Control Plane
+# Janus
 
-Janus is a production-oriented research platform for evaluating post-quantum cryptographic posture in cloud-native systems. As of Tuesday, August 11, 2026, the repository is strongest as a policy decision engine plus a layered cryptographic verification experiment: it maps request context to recommended PQC settings, exposes those decisions over gRPC and HTTP, and now includes both direct TLS verification and passive wire-level attestation paths for experimentation.
+Janus is an experimental post-quantum crypto-agility control plane. It discovers cryptographic exposure, attributes observed connections to workloads, assesses quantum migration risk, derives required posture, verifies negotiated TLS behavior independently, fails closed on non-compliant or unverifiable cryptographic state, and produces evidence-backed migration plans.
 
-Janus is not yet a full zero-trust enforcement system. In the current implementation, the strongest proof surface is a research-grade verifier stack rather than full deployment rollout, identity correlation, or service-mesh-wide enforcement.
+Janus is a research platform. It is not production-ready.
 
-## Current scope
+As of Wednesday, August 12, 2026, the repository is strongest as a reproducible research stack across five frozen milestones:
 
-- Policy-driven PQC selection with hot-reloadable YAML rules
-- gRPC and REST interfaces for evaluation, metrics, and policy editing
-- React dashboard with simulator, metrics, and policy review workflows
-- Envoy ext_authz and Wasm integration for advisory propagation experiments
-- liboqs-backed KEM experiments for standardized `ML-KEM-*` selections
+- `v0.3`: posture decision, direct TLS verification, fail-closed application gating
+- `v0.4`: passive wire-level TLS attestation with TCP reconstruction
+- `v0.5`: Linux workload attribution bound to the same live wire evidence
+- `v0.6-v0.9`: discovery/CBOM, deterministic quantum risk, policy bundle integrity, audit chain, and migration planning
+- `v1.0`: integrated research-release surface with backend/API/UI plumbing and benchmark entry points
 
-## Roadmap pillars
+## Proven
 
-1. Adaptive crypto policy engine
-2. Cryptographic enforcement plane
-3. Independent downgrade verification
-4. Crypto-agility discovery, inventory, and migration planning
+- Policy-driven posture decisions over gRPC and HTTP
+- Direct TLS 1.3 verification with `COMPLIANT`, `NON_COMPLIANT`, and `UNVERIFIED`
+- Fail-closed traffic gating for non-compliant or unverifiable crypto state
+- Passive TLS 1.3 `ServerHello` parsing from raw bytes and offline PCAPs
+- Live wire evidence classification for `X25519` and `X25519MLKEM768`
+- Linux procfs attribution from TCP 4-tuple to workload with PID, executable, socket inode, and process start time
+- Independent crypto and attribution verdicts on the same evidence record
+- Canonical algorithm registry with runtime-support boundaries separated from protocol metadata
+- Validated, versioned policy bundles with canonical hash and draft-to-activate lifecycle
+- Tamper-evident append-only audit log with hash-chain verification
+- Cryptographic discovery inventory and JSON CBOM generation
+- Deterministic quantum/HNDL-style risk assessment with explainable reasons
+- Migration planning that requires verification evidence before a migration can be marked verified
+- Minimal dashboard support for exposure, assets, workload detail, policy bundle metadata, and migration state
 
-## Architecture status
+## Experimental
 
-Current:
+- Discovery currently combines direct TLS scanning and verification-evidence ingestion rather than a broad autonomous crawler
+- Linux live capture and procfs attribution remain the authoritative environment-specific proof surfaces
+- Policy signatures are lightweight research metadata rather than a hardened PKI-backed signing system
+- Migration planning is a control-plane plan and verification loop, not automatic production mutation
+- AI Policy Copilot remains draft-only and intentionally non-authoritative
 
-```text
-Context -> Janus policy engine -> decision payload -> advisory integration
-```
+## Future Work
 
-Target:
+- Kubernetes and container-native workload identity beyond local procfs attribution
+- Richer endpoint-to-wire conflict detection and multi-observer reconciliation
+- Broader non-TLS cryptographic discovery
+- More extensive benchmark datasets and Linux CI benchmark capture
+- Additional signed release artifacts and supply-chain automation beyond the current practical controls
 
-```text
-Context -> Janus policy engine -> signed crypto policy decision
-        -> enforcement configuration -> negotiated protocol posture
-        -> independent verification -> downgrade detection and audit
-```
+## Runtime Boundaries
 
-## Important boundaries
-
-- `X-PQC-Recommended` is advisory metadata. It is not proof of TLS or mTLS enforcement.
-- The AI feature drafts policy. It does not automatically deploy policy.
-- `liboqs` integration in this repo is for experimentation and interoperability work, not a claim of hardened production cryptography.
-- The sample policies in `configs/policy.yaml` are demo logic, not a normative security baseline.
+- Go runtime baseline: `1.25+`
+- Active TLS runtime key-exchange scope: `X25519`, `X25519MLKEM768`
+- The registry may describe algorithms such as `ML-KEM-1024` and `ML-DSA-87` without claiming Go TLS can negotiate them directly
 
 ## Quickstart
 
-To run the backend on `:8080` and `:50051`, plus the React frontend on `:5173`:
-
 ```powershell
 cd C:\Users\aryan\OneDrive\Desktop\Janus
-$env:OPENAI_API_KEY="sk-..."  # optional, for the policy assistant
+$env:OPENAI_API_KEY="sk-..."  # optional, only for draft policy generation
 .\run_all.ps1
 ```
 
-The UI will be available at `http://localhost:5173`.
+Backend services:
 
-Janus `v0.3` verification support requires Go `1.25+`. The negotiated key-exchange evidence path depends on the `crypto/tls` APIs available in Go 1.25.
-Janus `v0.4` live wire verification additionally depends on Linux, `libpcap`, and the `livecapture` build tag.
+- HTTP API: `http://localhost:8080`
+- gRPC API: `localhost:50051`
+- React UI: `http://localhost:5173`
 
-## Web UI
+## Core Commands
 
-The frontend in `web/` provides:
+- `make test`: host-safe backend surface
+- `make test-cache`: cache regression tests
+- `make test-wire-live`: Linux-only live capture verification
+- `make benchmark`: benchmark entry point for the v1.0 research surface
+- `npm run build`: frontend production build in [web](C:/Users/aryan/OneDrive/Desktop/Janus/web)
 
-- Dashboard metrics and threat summaries
-- Request simulator for demo policy evaluation
-- Policy editor for review and manual application
-- AI policy assistant that drafts YAML and sends it to the editor for human review
+## API Surface
 
-## Backend commands
+Janus exposes:
 
-| Command | Description |
-|---------|-------------|
-| `make test` | Run the host-safe default test surface |
-| `make test-cache` | Run cache regression tests separately |
-| `make test-wire-live` | Run the Linux-only live wire-capture proof surface |
-| `make test-liboqs` | Run liboqs-backed packages with the `liboqs` build tag |
-| `make test-envoy` | Run Envoy-specific packages with the `envoy` build tag |
-| `make test-integration` | Run integration tests with the `integration` build tag |
-| `make lint` | Run `golangci-lint` |
-| `make docker` | Build the multi-stage Docker image |
-| `make run` | Run the compiled binary locally |
-| `./scripts/build_wasm.sh` | Compile the Envoy Wasm filter |
+- `/api/evaluate`: posture recommendation
+- `/api/policy`, `/api/policy/validate`, `/api/policy/bundle`: draft, validate, activate, inspect policy bundles
+- `/api/discovery/scan`, `/api/discovery/evidence`, `/api/discovery/assets`, `/api/discovery/cbom`: discovery and inventory
+- `/api/risk/evaluate`: deterministic quantum exposure assessment
+- `/api/migration/plan`, `/api/migration/plans`, `/api/migration/verify`: migration planning and evidence-backed verification
+- `/api/audit/records`, `/api/audit/verify`: tamper-evident audit inspection
 
-## Interfaces
+## Security Invariants
 
-Janus currently exposes:
+- Missing cryptographic evidence -> `UNVERIFIED`
+- Weaker or different observed posture than required -> `NON_COMPLIANT`
+- Ambiguous packet evidence -> `UNVERIFIED`
+- Unknown workload owner -> `UNATTRIBUTED`
+- Multiple plausible workload owners -> `AMBIGUOUS`
+- LLM output -> draft policy only, never automatically authoritative
 
-- gRPC on `:50051` for backend-to-backend evaluation
-- REST on `:8080` for the web UI, metrics, and policy management
+## Verification Notes
 
-Example evaluation:
+Local Windows verification on Wednesday, August 12, 2026:
 
-```bash
-curl -X POST http://localhost:8080/api/evaluate \
-  -H "Content-Type: application/json" \
-  -d '{"scenario":"MICROSEGMENTATION","region":"EU","risk":4,"device_type":"iot"}'
-```
+- `npm run build` passed
+- `go test ./internal/cache -v` passed
+- `go test ./internal/verification/... -v` passed
+- `go test ./cmd/tls-verifier -v` compiled cleanly
+- `go test ./cmd/janus-wire-verifier -v` compiled cleanly
+- `make test` was partially blocked by Windows Defender quarantining Go's `covdata.exe` coverage helper on this host
 
-## Policy example
+Linux CI remains authoritative for:
 
-Edit [configs/policy.yaml](C:\Users\aryan\OneDrive\Desktop\Janus\configs\policy.yaml) directly or use the web editor.
+- live capture
+- procfs attribution in CI
+- coverage-enabled gates that are unreliable on this Windows machine
 
-```yaml
-default:
-  kem: "ML-KEM-768"
-  hybrid_peer: "X25519MLKEM768"
-  security_level: 3
+## Supporting Docs
 
-rules:
-  - name: "High Risk EU IoT Demo"
-    match:
-      region: "EU"
-      risk_min: 4
-      device_type: "iot"
-    config:
-      kem: "ML-KEM-1024"
-      sig: "ML-DSA-87"
-      security_level: 5
-```
-
-## Security priorities
-
-The most important next steps are:
-
-1. Move from recommendation to real protocol-level enforcement.
-2. Add independent verification of negotiated cryptography and downgrade detection.
-3. Sign, version, simulate, and audit policy changes.
-4. Introduce stronger identity and posture sources for request attributes.
-5. Expand from demo rules to discovery, CBOM, and migration planning.
-
-## Threat model
-
-See [THREAT_MODEL.md](C:\Users\aryan\OneDrive\Desktop\Janus\THREAT_MODEL.md) for assets, trust boundaries, threat actors, assumptions, and failure modes.
-
-## Testing
-
-See [TESTING.md](C:\Users\aryan\OneDrive\Desktop\Janus\TESTING.md) for the split between host-safe tests, live-capture tests, liboqs-gated tests, Envoy-gated tests, integration tests, and the current Windows and CI notes.
-
-Linux CI is configured in [`.github/workflows/ci.yml`](C:\Users\aryan\OneDrive\Desktop\Janus\.github\workflows\ci.yml) as the authoritative pass/fail path for the core test surface, cache regression test, and the `v0.4` Ubuntu live-capture lane.
-
-## Roadmap
-
-See [ROADMAP.md](C:\Users\aryan\OneDrive\Desktop\Janus\ROADMAP.md) for the depth-first milestone plan and current freeze point.
-
-The concrete `v0.3` definition of done lives in [V03_ACCEPTANCE.md](C:\Users\aryan\OneDrive\Desktop\Janus\V03_ACCEPTANCE.md).
-The concrete `v0.4` definition of done lives in [V04_ACCEPTANCE.md](C:\Users\aryan\OneDrive\Desktop\Janus\V04_ACCEPTANCE.md).
-
-As of Tuesday, August 11, 2026, `v0.4` should be treated as implementation-complete but release-pending until the Ubuntu live-capture CI lane executes successfully.
-
-## Known gaps
-
-- No endpoint-to-wire evidence conflict model yet
-- No signed policy bundles or tamper-evident audit chain yet
-- No eBPF, PID, container, or workload attribution yet
-- Request attributes are still simplified demo inputs
-- Cache invalidation is time-based, not revocation-driven
-- The Envoy integration surface needs more build and interoperability work
-
-## Repository notes
-
-- Standardized algorithm identifiers in docs and sample policy use `ML-KEM`, `ML-DSA`, and `X25519MLKEM768`.
-- `X25519MLKEM768`, `SecP256r1MLKEM768`, and `SecP384r1MLKEM1024` are standardized for TLS 1.3 hybrid key agreement in RFC 10024.
-- The code still maps those names to the legacy identifiers required by the current `liboqs-go` binding where necessary.
-
-Built with Go, gRPC, React, Tailwind, OpenTelemetry, Prometheus, Envoy, TinyGo, and liboqs experiments.
+- [WHITEPAPER.md](C:/Users/aryan/OneDrive/Desktop/Janus/WHITEPAPER.md)
+- [THREAT_MODEL.md](C:/Users/aryan/OneDrive/Desktop/Janus/THREAT_MODEL.md)
+- [TESTING.md](C:/Users/aryan/OneDrive/Desktop/Janus/TESTING.md)
+- [ROADMAP.md](C:/Users/aryan/OneDrive/Desktop/Janus/ROADMAP.md)
+- [V03_ACCEPTANCE.md](C:/Users/aryan/OneDrive/Desktop/Janus/V03_ACCEPTANCE.md)
+- [V04_ACCEPTANCE.md](C:/Users/aryan/OneDrive/Desktop/Janus/V04_ACCEPTANCE.md)
+- [V05_ACCEPTANCE.md](C:/Users/aryan/OneDrive/Desktop/Janus/V05_ACCEPTANCE.md)
+- [V10_ACCEPTANCE.md](C:/Users/aryan/OneDrive/Desktop/Janus/V10_ACCEPTANCE.md)

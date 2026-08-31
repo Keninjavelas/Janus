@@ -13,7 +13,14 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/sashabaranov/go-openai"
 	pb "github.com/yourorg/janus/api/proto/v1"
+	"github.com/yourorg/janus/internal/algorithms"
+	"github.com/yourorg/janus/internal/config"
+	"github.com/yourorg/janus/internal/discovery"
 	"github.com/yourorg/janus/internal/fallback"
+	"github.com/yourorg/janus/internal/migration"
+	"github.com/yourorg/janus/internal/risk"
+	"github.com/yourorg/janus/internal/verification"
+	"gopkg.in/yaml.v3"
 )
 
 var logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
@@ -30,6 +37,47 @@ type MetricsCollector struct {
 var metrics = &MetricsCollector{
 	AlgorithmCounts: make(map[string]int64),
 	Latencies:       []float64{},
+}
+
+type ContextRequest struct {
+	Scenario         string  `json:"scenario"`
+	Region           string  `json:"region"`
+	Risk             int32   `json:"risk"`
+	DeviceType       string  `json:"device_type"`
+	KeyRotationHours int32   `json:"key_rotation_hours"`
+	CertValidityDays int32   `json:"cert_validity_days"`
+	LatencyBudgetMs  float64 `json:"latency_budget_ms"`
+}
+
+type RiskEvaluateRequest struct {
+	AssetID               string                 `json:"asset_id,omitempty"`
+	Asset                 *discovery.CryptoAsset `json:"asset,omitempty"`
+	DataSensitivity       string                 `json:"data_sensitivity,omitempty"`
+	ConfidentialityYears  int                    `json:"confidentiality_years,omitempty"`
+	AssetCriticality      string                 `json:"asset_criticality,omitempty"`
+	ExternalExposure      bool                   `json:"external_exposure,omitempty"`
+	WorkloadType          string                 `json:"workload_type,omitempty"`
+	RetentionYears        int                    `json:"retention_years,omitempty"`
+	MigrationReady        bool                   `json:"migration_ready"`
+	CompatibilityBlockers []string               `json:"compatibility_blockers,omitempty"`
+}
+
+type MigrationPlanRequest struct {
+	RiskEvaluateRequest
+	Mode migration.Mode `json:"mode,omitempty"`
+}
+
+type MigrationVerifyRequest struct {
+	AssetID  string                            `json:"asset_id"`
+	Evidence verification.VerificationEvidence `json:"evidence"`
+}
+
+type DiscoveryScanRequest struct {
+	Targets []struct {
+		TargetAddress string   `json:"target_address"`
+		ServerName    string   `json:"server_name"`
+		ClientCurves  []string `json:"client_curves,omitempty"`
+	} `json:"targets"`
 }
 
 func RecordDecision(kem string, latencyMs float64, cacheHit bool) {
@@ -49,29 +97,32 @@ func RecordDecision(kem string, latencyMs float64, cacheHit bool) {
 	}
 }
 
-type ContextRequest struct {
-	Scenario         string  `json:"scenario"`
-	Region           string  `json:"region"`
-	Risk             int32   `json:"risk"`
-	DeviceType       string  `json:"device_type"`
-	KeyRotationHours int32   `json:"key_rotation_hours"`
-	CertValidityDays int32   `json:"cert_validity_days"`
-	LatencyBudgetMs  float64 `json:"latency_budget_ms"`
-}
-
 func StartHTTPServer() {
 	r := mux.NewRouter()
 	r.HandleFunc("/api/evaluate", handleEvaluate).Methods("POST", "OPTIONS")
 	r.HandleFunc("/api/metrics", handleMetrics).Methods("GET", "OPTIONS")
+	r.HandleFunc("/api/algorithms", handleAlgorithms).Methods("GET", "OPTIONS")
 	r.HandleFunc("/api/policy", handleGetPolicy).Methods("GET", "OPTIONS")
 	r.HandleFunc("/api/policy", handleUpdatePolicy).Methods("PUT", "OPTIONS")
+	r.HandleFunc("/api/policy/bundle", handleGetPolicyBundle).Methods("GET", "OPTIONS")
+	r.HandleFunc("/api/policy/validate", handleValidatePolicy).Methods("POST", "OPTIONS")
 	r.HandleFunc("/api/ai/generate", handleAIGenerate).Methods("POST", "OPTIONS")
+	r.HandleFunc("/api/discovery/evidence", handleObserveDiscoveryEvidence).Methods("POST", "OPTIONS")
+	r.HandleFunc("/api/discovery/scan", handleDiscoveryScan).Methods("POST", "OPTIONS")
+	r.HandleFunc("/api/discovery/assets", handleListDiscoveredAssets).Methods("GET", "OPTIONS")
+	r.HandleFunc("/api/discovery/cbom", handleGetCBOM).Methods("GET", "OPTIONS")
+	r.HandleFunc("/api/risk/evaluate", handleRiskEvaluate).Methods("POST", "OPTIONS")
+	r.HandleFunc("/api/migration/plan", handleBuildMigrationPlan).Methods("POST", "OPTIONS")
+	r.HandleFunc("/api/migration/plans", handleListMigrationPlans).Methods("GET", "OPTIONS")
+	r.HandleFunc("/api/migration/verify", handleVerifyMigration).Methods("POST", "OPTIONS")
+	r.HandleFunc("/api/audit/records", handleAuditRecords).Methods("GET", "OPTIONS")
+	r.HandleFunc("/api/audit/verify", handleAuditVerify).Methods("GET", "OPTIONS")
 
 	r.Use(corsMiddleware)
 	r.PathPrefix("/").Handler(http.FileServer(http.Dir("./web/dist")))
 
 	logger.Info().Msg("HTTP API server listening on :8080")
-	http.ListenAndServe(":8080", r)
+	_ = http.ListenAndServe(":8080", r)
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -95,15 +146,6 @@ func handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info().
-		Str("scenario", req.Scenario).
-		Str("region", req.Region).
-		Int32("risk", req.Risk).
-		Str("device_type", req.DeviceType).
-		Int32("rotation_hours", req.KeyRotationHours).
-		Int32("cert_days", req.CertValidityDays).
-		Msg("received evaluate request")
-
 	grpcReq := &pb.ContextRequest{
 		Scenario:         req.Scenario,
 		Region:           req.Region,
@@ -117,24 +159,22 @@ func handleEvaluate(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	cfg, err := fallback.EvaluateWithFallback(r.Context(), grpcReq)
 	latencyMs := float64(time.Since(start).Microseconds()) / 1000.0
-
 	if err != nil {
 		logger.Error().Err(err).Msg("evaluation failed")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	cacheHit := false
-	RecordDecision(cfg.Kem, latencyMs, cacheHit)
+	RecordDecision(cfg.Kem, latencyMs, false)
+	recordAuditEvent("decision_created", map[string]any{
+		"scenario":    req.Scenario,
+		"region":      req.Region,
+		"risk":        req.Risk,
+		"kem":         cfg.Kem,
+		"hybrid_peer": cfg.HybridPeer,
+	})
 
-	logger.Info().
-		Str("kem", cfg.Kem).
-		Str("sig", cfg.Sig).
-		Float64("latency_ms", latencyMs).
-		Msg("evaluation successful")
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(cfg)
+	writeJSON(w, http.StatusOK, cfg)
 }
 
 func handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -144,42 +184,68 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 	var p99 float64
 	if len(metrics.Latencies) > 0 {
 		sum := 0.0
-		for _, v := range metrics.Latencies {
-			sum += v
+		for _, value := range metrics.Latencies {
+			sum += value
 		}
-		p99 = sum / float64(len(metrics.Latencies)) * 1.5
-		if p99 > 10 {
-			p99 = 10
-		}
+		p99 = (sum / float64(len(metrics.Latencies))) * 1.5
 	}
 
 	total := metrics.TotalDecisions
-	var hitRate float64
+	hitRate := 0.0
 	if total > 0 {
 		hitRate = float64(metrics.CacheHits) / float64(total)
 	}
 
-	threatLevel := "safe"
-	if total > 0 {
-		classicalCount := metrics.AlgorithmCounts["RSA-2048"] + metrics.AlgorithmCounts["ECDSA-P256"]
-		if classicalCount > 0 {
-			threatLevel = "critical"
-		} else if metrics.AlgorithmCounts["ML-KEM-512"] > total/2 {
-			threatLevel = "warning"
+	assets := inventory.List(staleAssetAge)
+	priorityCounts := map[string]int{
+		"P0": 0,
+		"P1": 0,
+		"P2": 0,
+		"P3": 0,
+	}
+	for _, plan := range migrations.List() {
+		priorityCounts[string(plan.Priority)]++
+	}
+
+	quantumSafe := 0
+	classical := 0
+	unknown := 0
+	for _, asset := range assets {
+		switch asset.KeyExchangeClass {
+		case algorithms.KeyExchangeClassHybridPQ:
+			quantumSafe++
+		case algorithms.KeyExchangeClassClassical:
+			classical++
+		default:
+			unknown++
 		}
 	}
 
-	response := map[string]interface{}{
-		"total_decisions":  total,
-		"cache_hit_rate":   hitRate,
-		"avg_latency_ms":   p99 * 0.6,
-		"p99_latency_ms":   p99,
-		"algorithm_counts": metrics.AlgorithmCounts,
-		"threat_level":     threatLevel,
+	quantumExposure := "safe"
+	if priorityCounts["P0"] > 0 || classical > 0 {
+		quantumExposure = "critical"
+	} else if unknown > 0 || priorityCounts["P1"] > 0 {
+		quantumExposure = "warning"
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total_decisions":           total,
+		"cache_hit_rate":            hitRate,
+		"avg_latency_ms":            p99 * 0.6,
+		"p99_latency_ms":            p99,
+		"algorithm_counts":          metrics.AlgorithmCounts,
+		"threat_level":              quantumExposure,
+		"quantum_exposure":          quantumExposure,
+		"total_assets":              len(assets),
+		"quantum_safe_assets":       quantumSafe,
+		"classical_assets":          classical,
+		"unknown_assets":            unknown,
+		"migration_priority_counts": priorityCounts,
+	})
+}
+
+func handleAlgorithms(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, algorithms.DefaultRegistry().All())
 }
 
 func handleGetPolicy(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +255,35 @@ func handleGetPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/yaml")
-	w.Write(data)
+	_, _ = w.Write(data)
+}
+
+func handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, config.GetLoadedPolicy())
+}
+
+func handleValidatePolicy(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	policy, err := config.ParsePolicyYAML(body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	policy.Metadata.State = config.PolicyStateDraft
+	policy.Metadata.Active = false
+	policy.Metadata.Signature = nil
+
+	compiled, err := config.CompilePolicy(policy, time.Now().UTC())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, compiled)
 }
 
 func handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
@@ -198,14 +292,243 @@ func handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := os.WriteFile("configs/policy.yaml", body, 0644); err != nil {
+
+	policy, err := config.ParsePolicyYAML(body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	policy.Metadata.State = config.PolicyStateActive
+	policy.Metadata.Active = true
+	compiled, err := config.CompilePolicy(policy, time.Now().UTC())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	policy.Metadata.ID = compiled.PolicyID
+	policy.Metadata.Version = compiled.Version
+	policy.Metadata.CreatedAt = compiled.CreatedAt
+	policy.Metadata.Active = compiled.Active
+	policy.Metadata.State = compiled.State
+	policy.Metadata.Signature = compiled.Signature
+
+	rendered, err := yaml.Marshal(policy)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := os.WriteFile("configs/policy.yaml", rendered, 0o644); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := config.ReloadPolicy(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	logger.Info().Msg("policy updated and hot-reloaded")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"reloaded"}`))
+	recordAuditEvent("policy_activated", map[string]any{
+		"policy_id":      compiled.PolicyID,
+		"version":        compiled.Version,
+		"canonical_hash": compiled.CanonicalHash,
+	})
+	writeJSON(w, http.StatusOK, compiled)
+}
+
+func handleObserveDiscoveryEvidence(w http.ResponseWriter, r *http.Request) {
+	var evidence verification.VerificationEvidence
+	if err := json.NewDecoder(r.Body).Decode(&evidence); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	asset, err := inventory.ObserveEvidence(evidence)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	recordAuditEvent("connection_observed", map[string]any{
+		"asset_id":           asset.ID,
+		"required":           evidence.Required,
+		"observed":           evidence.Observed,
+		"crypto_status":      evidence.Status,
+		"attribution_status": evidence.AttributionStatus,
+		"observation_level":  evidence.ObservationLevel,
+		"connection_id":      evidence.ConnectionID,
+	})
+	writeJSON(w, http.StatusOK, asset)
+}
+
+func handleDiscoveryScan(w http.ResponseWriter, r *http.Request) {
+	var req DiscoveryScanRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	requests := make([]discovery.ScanRequest, 0, len(req.Targets))
+	for _, target := range req.Targets {
+		requests = append(requests, discovery.ScanRequest{
+			TargetAddress: target.TargetAddress,
+			ServerName:    target.ServerName,
+			ClientCurves:  target.ClientCurves,
+		})
+	}
+
+	assets, err := discovery.ScanInventory(r.Context(), inventory, requests)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	for _, asset := range assets {
+		recordAuditEvent("asset_discovered", map[string]any{
+			"asset_id":        asset.ID,
+			"key_exchange":    asset.KeyExchange,
+			"evidence_source": asset.EvidenceSource,
+		})
+	}
+	writeJSON(w, http.StatusOK, assets)
+}
+
+func handleListDiscoveredAssets(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, inventory.List(staleAssetAge))
+}
+
+func handleGetCBOM(w http.ResponseWriter, r *http.Request) {
+	payload, err := inventory.CBOMJSON(staleAssetAge)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(payload)
+}
+
+func handleRiskEvaluate(w http.ResponseWriter, r *http.Request) {
+	var req RiskEvaluateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	asset, ok := resolveAssetRequest(req.AssetID, req.Asset)
+	if !ok {
+		http.Error(w, "unknown asset", http.StatusBadRequest)
+		return
+	}
+
+	assessment := risk.Evaluate(risk.Input{
+		Asset:                 asset,
+		DataSensitivity:       req.DataSensitivity,
+		ConfidentialityYears:  req.ConfidentialityYears,
+		AssetCriticality:      req.AssetCriticality,
+		ExternalExposure:      req.ExternalExposure,
+		WorkloadType:          req.WorkloadType,
+		RetentionYears:        req.RetentionYears,
+		MigrationReady:        req.MigrationReady,
+		CompatibilityBlockers: req.CompatibilityBlockers,
+	})
+	recordAuditEvent("risk_evaluated", map[string]any{
+		"asset_id": asset.ID,
+		"risk":     assessment.Risk,
+		"priority": assessment.Priority,
+	})
+	writeJSON(w, http.StatusOK, assessment)
+}
+
+func handleBuildMigrationPlan(w http.ResponseWriter, r *http.Request) {
+	var req MigrationPlanRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	asset, ok := resolveAssetRequest(req.AssetID, req.Asset)
+	if !ok {
+		http.Error(w, "unknown asset", http.StatusBadRequest)
+		return
+	}
+
+	assessment := risk.Evaluate(risk.Input{
+		Asset:                 asset,
+		DataSensitivity:       req.DataSensitivity,
+		ConfidentialityYears:  req.ConfidentialityYears,
+		AssetCriticality:      req.AssetCriticality,
+		ExternalExposure:      req.ExternalExposure,
+		WorkloadType:          req.WorkloadType,
+		RetentionYears:        req.RetentionYears,
+		MigrationReady:        req.MigrationReady,
+		CompatibilityBlockers: req.CompatibilityBlockers,
+	})
+
+	mode := req.Mode
+	if mode == "" {
+		mode = migration.ModeAudit
+	}
+
+	plan := migration.BuildPlan(asset, assessment, req.CompatibilityBlockers, mode)
+	migrations.Put(plan)
+	recordAuditEvent("migration_recommended", map[string]any{
+		"asset_id": plan.AssetID,
+		"current":  plan.Current,
+		"target":   plan.Target,
+		"priority": plan.Priority,
+		"status":   plan.Status,
+	})
+	writeJSON(w, http.StatusOK, plan)
+}
+
+func handleListMigrationPlans(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, migrations.List())
+}
+
+func handleVerifyMigration(w http.ResponseWriter, r *http.Request) {
+	var req MigrationVerifyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	plan, ok := migrations.Get(req.AssetID)
+	if !ok {
+		http.Error(w, "unknown migration plan", http.StatusBadRequest)
+		return
+	}
+
+	updated := migration.VerifyPlan(plan, req.Evidence)
+	migrations.Put(updated)
+	if _, err := inventory.ObserveEvidence(req.Evidence); err == nil {
+		recordAuditEvent("migration_verification", map[string]any{
+			"asset_id":           updated.AssetID,
+			"verification_state": updated.VerificationState,
+			"connection_id":      req.Evidence.ConnectionID,
+			"observed":           req.Evidence.Observed,
+			"required":           req.Evidence.Required,
+			"crypto_status":      req.Evidence.Status,
+			"attribution_status": req.Evidence.AttributionStatus,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func handleAuditRecords(w http.ResponseWriter, r *http.Request) {
+	records, err := auditLog.ReadAll()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, records)
+}
+
+func handleAuditVerify(w http.ResponseWriter, r *http.Request) {
+	result, err := auditLog.Verify()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func handleAIGenerate(w http.ResponseWriter, r *http.Request) {
@@ -221,7 +544,9 @@ func handleAIGenerate(w http.ResponseWriter, r *http.Request) {
 	if apiKey == "" {
 		logger.Warn().Msg("OPENAI_API_KEY not set, returning fallback YAML")
 		fallbackYAML := `# Draft policy generated without a live model.
-# Review in the Policy Editor before applying.
+# Review, validate, and manually activate this policy before applying.
+metadata:
+  state: draft
 default:
   kem: "ML-KEM-768"
   hybrid_peer: "X25519MLKEM768"
@@ -235,20 +560,18 @@ rules:
       kem: "ML-KEM-1024"
       sig: "ML-DSA-87"
       security_level: 5`
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"yaml": fallbackYAML})
+		writeJSON(w, http.StatusOK, map[string]string{"yaml": fallbackYAML})
 		return
 	}
 
 	client := openai.NewClient(apiKey)
 	systemPrompt := `You are the Janus Policy Assistant.
-Generate ONLY valid YAML for a draft policy that must be reviewed by a human before application.
-Use standardized names such as ML-KEM-512, ML-KEM-768, ML-KEM-1024, ML-DSA-44, ML-DSA-65, ML-DSA-87, and X25519MLKEM768.
-Do not emit classical-only algorithms or obsolete hybrid identifiers.
-The schema is: default (kem, hybrid_peer, security_level) and rules (name, match, config).
-Available match fields: scenario, region, risk_min, risk_max, time_from, time_to, device_type, rotation_hours_min/max, cert_validity_days_min.
-Available config fields: kem (ML-KEM-512/768/1024), sig (ML-DSA-44/65/87/SLH-DSA-128s/null), hybrid_peer, security_level (1-5).
-It is acceptable to include YAML comments that remind the operator this is a draft.`
+Generate ONLY valid YAML for a draft policy that must be reviewed by a human before activation.
+Always emit metadata.state: draft.
+Use standardized names such as ML-KEM-768, ML-KEM-1024, ML-DSA-65, ML-DSA-87, and X25519MLKEM768.
+Do not emit unsupported, fictional, or classical-only fallback algorithms.
+The schema is metadata, default, and rules.
+Do not claim the policy is active or approved.`
 
 	resp, err := client.CreateChatCompletion(
 		context.Background(),
@@ -267,7 +590,20 @@ It is acceptable to include YAML comments that remind the operator this is a dra
 		return
 	}
 
-	yaml := resp.Choices[0].Message.Content
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"yaml": yaml})
+	writeJSON(w, http.StatusOK, map[string]string{"yaml": resp.Choices[0].Message.Content})
+}
+
+func resolveAssetRequest(assetID string, inline *discovery.CryptoAsset) (discovery.CryptoAsset, bool) {
+	if inline != nil {
+		return *inline, true
+	}
+	if assetID == "" {
+		return discovery.CryptoAsset{}, false
+	}
+	for _, asset := range inventory.List(0) {
+		if asset.ID == assetID {
+			return asset, true
+		}
+	}
+	return discovery.CryptoAsset{}, false
 }
