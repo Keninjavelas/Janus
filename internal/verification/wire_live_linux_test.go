@@ -260,8 +260,8 @@ func TestWireLiveServerHelperProcess(t *testing.T) {
 		os.Exit(1)
 	}
 
-	_ = tlsConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-	_, _ = io.Copy(io.Discard, tlsConn)
+	_ = tlsConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	time.Sleep(2 * time.Second)
 	os.Exit(0)
 }
 
@@ -299,6 +299,8 @@ func TestWireLiveClientHelperProcess(t *testing.T) {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
+
+	time.Sleep(2 * time.Second)
 	os.Exit(0)
 }
 
@@ -376,11 +378,11 @@ func runLiveWireScenarioDetailed(t *testing.T, scenario liveWireScenario) liveWi
 		"JANUS_HELPER_CURVES=" + strings.Join(scenario.ClientCurves, ","),
 	})
 
-	if err := clientCmd.Wait(); err != nil {
-		t.Fatalf("client helper failed: %v: %s", err, clientStderr.String())
-	}
 	if err := verifierCmd.Wait(); err != nil {
 		t.Fatalf("verifier helper failed: %v: %s", err, verifierStderr.String())
+	}
+	if err := clientCmd.Wait(); err != nil {
+		t.Fatalf("client helper failed: %v: %s", err, clientStderr.String())
 	}
 	if err := serverCmd.Wait(); err != nil {
 		t.Fatalf("server helper failed: %v: %s", err, serverStderr.String())
