@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/yourorg/janus/internal/verification/attribution"
@@ -28,12 +29,46 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 	captureCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	var mu sync.Mutex
+	attributionCache := make(map[pcapverify.FlowKey]attribution.Result)
+
+	onTCPPacket := func(srcIP string, srcPort uint16, dstIP string, dstPort uint16) {
+		flowKey := pcapverify.FlowKey{
+			SrcIP:   srcIP,
+			SrcPort: srcPort,
+			DstIP:   dstIP,
+			DstPort: dstPort,
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if _, exists := attributionCache[flowKey]; exists {
+			return
+		}
+		res, err := resolveLocalFlowAttribution(attribution.Flow{
+			SrcIP:   srcIP,
+			SrcPort: srcPort,
+			DstIP:   dstIP,
+			DstPort: dstPort,
+		})
+		if err == nil && res.Status == attribution.Attributed {
+			attributionCache[flowKey] = res
+			revKey := pcapverify.FlowKey{
+				SrcIP:   dstIP,
+				SrcPort: dstPort,
+				DstIP:   srcIP,
+				DstPort: srcPort,
+			}
+			attributionCache[revKey] = res
+		}
+	}
+
 	inspections, err := pcapverify.InspectLiveCapture(captureCtx, pcapverify.LiveCaptureConfig{
 		Interface:   req.ObservationInterface,
 		Port:        port,
 		SnapLen:     65535,
 		Promiscuous: false,
 		PollTimeout: 100 * time.Millisecond,
+		OnTCPPacket: onTCPPacket,
 	})
 	if err != nil {
 		return wireUnverifiedOutcome(req, err.Error()), nil
@@ -44,7 +79,7 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 		return wireUnverifiedOutcome(req, withLiveCaptureDiagnostics("no tls server hello observed before capture ended", inspections.Diagnostics)), nil
 	}
 
-	evidence := buildWireLiveEvidence(req, inspection, inspections.Diagnostics)
+	evidence := buildWireLiveEvidence(req, inspection, inspections.Diagnostics, attributionCache)
 
 	if evidence.Status == Compliant {
 		evidence.ApplicationAccess = AccessAllowed
@@ -55,7 +90,7 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 	return VerificationOutcome{Evidence: evidence}, nil
 }
 
-func buildWireLiveEvidence(req VerificationRequest, inspection pcapverify.FlowInspection, diagnostics pcapverify.LiveCaptureDiagnostics) VerificationEvidence {
+func buildWireLiveEvidence(req VerificationRequest, inspection pcapverify.FlowInspection, diagnostics pcapverify.LiveCaptureDiagnostics, attributionCache map[pcapverify.FlowKey]attribution.Result) VerificationEvidence {
 	observed := ""
 	detail := inspection.Detail
 	if inspection.Status == pcapverify.StatusUnverified {
@@ -76,7 +111,11 @@ func buildWireLiveEvidence(req VerificationRequest, inspection pcapverify.FlowIn
 		evidence.TLSVersion = inspection.Observation.TLSVersion
 	}
 
-	attachWireFlowAttribution(&evidence, inspection.Flow)
+	if snapshotted, ok := attributionCache[inspection.Flow]; ok && snapshotted.Status == attribution.Attributed {
+		ApplyAttributionResult(&evidence, snapshotted)
+	} else {
+		attachWireFlowAttribution(&evidence, inspection.Flow)
+	}
 	return evidence
 }
 

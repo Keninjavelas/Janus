@@ -8,7 +8,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"

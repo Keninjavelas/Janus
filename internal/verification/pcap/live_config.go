@@ -11,6 +11,7 @@ type LiveCaptureConfig struct {
 	SnapLen     int32
 	Promiscuous bool
 	PollTimeout time.Duration
+	OnTCPPacket func(srcIP string, srcPort uint16, dstIP string, dstPort uint16)
 }
 
 type LiveCaptureDiagnostics struct {
