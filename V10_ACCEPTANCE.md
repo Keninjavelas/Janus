@@ -50,6 +50,10 @@ LINUX AUTHORITATIVE CI
 PENDING
 ```
 
+## Attribution Invariant
+
+For `WIRE_LIVE` target verification, workload attribution refers to the local process owning the configured target/server endpoint, not whichever endpoint transmitted the first observed packet.
+
 ## Acceptance Rule
 
 `v1.0` should be treated as research-release-ready locally and fully accepted once the Linux-authoritative CI lanes are green without changing the frozen semantics of the `v0.3`, `v0.4`, and `v0.5` verification chain.

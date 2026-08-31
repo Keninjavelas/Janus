@@ -10,6 +10,10 @@ const (
 	Ambiguous    AttributionStatus = "AMBIGUOUS"
 )
 
+// Flow defines an observed TCP 4-tuple.
+// Note: For WIRE_LIVE target verification, workload attribution refers to the
+// local process owning the configured target/server endpoint, not whichever
+// endpoint transmitted the first observed packet.
 type Flow struct {
 	SrcIP   string
 	SrcPort uint16
@@ -17,6 +21,7 @@ type Flow struct {
 	DstPort uint16
 }
 
+// Workload represents the provenance of a local process attached to a network socket.
 type Workload struct {
 	PID                   int
 	Executable            string
