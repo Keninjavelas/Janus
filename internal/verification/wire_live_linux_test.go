@@ -259,8 +259,9 @@ func TestWireLiveServerHelperProcess(t *testing.T) {
 		os.Exit(1)
 	}
 
-	_ = tlsConn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	time.Sleep(2 * time.Second)
+	_ = tlsConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	buf := make([]byte, 1)
+	_, _ = tlsConn.Read(buf)
 	os.Exit(0)
 }
 
@@ -298,8 +299,6 @@ func TestWireLiveClientHelperProcess(t *testing.T) {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
-
-	time.Sleep(2 * time.Second)
 	os.Exit(0)
 }
 

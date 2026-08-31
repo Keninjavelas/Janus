@@ -33,32 +33,38 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 	attributionCache := make(map[pcapverify.FlowKey]attribution.Result)
 
 	onTCPPacket := func(srcIP string, srcPort uint16, dstIP string, dstPort uint16) {
-		flowKey := pcapverify.FlowKey{
-			SrcIP:   srcIP,
-			SrcPort: srcPort,
-			DstIP:   dstIP,
-			DstPort: dstPort,
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		if _, exists := attributionCache[flowKey]; exists {
-			return
-		}
-		res, err := resolveLocalFlowAttribution(attribution.Flow{
-			SrcIP:   srcIP,
-			SrcPort: srcPort,
-			DstIP:   dstIP,
-			DstPort: dstPort,
-		})
-		if err == nil && res.Status == attribution.Attributed {
-			attributionCache[flowKey] = res
-			revKey := pcapverify.FlowKey{
+		var serverFlow pcapverify.FlowKey
+		if srcPort == port {
+			serverFlow = pcapverify.FlowKey{
+				SrcIP:   srcIP,
+				SrcPort: srcPort,
+				DstIP:   dstIP,
+				DstPort: dstPort,
+			}
+		} else if dstPort == port {
+			serverFlow = pcapverify.FlowKey{
 				SrcIP:   dstIP,
 				SrcPort: dstPort,
 				DstIP:   srcIP,
 				DstPort: srcPort,
 			}
-			attributionCache[revKey] = res
+		} else {
+			return
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+		if _, exists := attributionCache[serverFlow]; exists {
+			return
+		}
+		res, err := resolveLocalFlowAttribution(attribution.Flow{
+			SrcIP:   serverFlow.SrcIP,
+			SrcPort: serverFlow.SrcPort,
+			DstIP:   serverFlow.DstIP,
+			DstPort: serverFlow.DstPort,
+		})
+		if err == nil && res.Status == attribution.Attributed {
+			attributionCache[serverFlow] = res
 		}
 	}
 

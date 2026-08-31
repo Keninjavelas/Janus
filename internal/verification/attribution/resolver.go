@@ -47,14 +47,6 @@ func (r Resolver) ResolveLocalSourceOwner(flow Flow) (Result, error) {
 			inodes = append(inodes, socket.inode)
 		}
 	}
-	if len(inodes) == 0 {
-		for _, socket := range sockets {
-			if socket.localIP == flow.DstIP && socket.localPort == flow.DstPort &&
-				socket.remoteIP == flow.SrcIP && socket.remotePort == flow.SrcPort {
-				inodes = append(inodes, socket.inode)
-			}
-		}
-	}
 
 	switch len(inodes) {
 	case 0:
