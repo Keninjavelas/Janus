@@ -32,29 +32,24 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 	var mu sync.Mutex
 	attributionCache := make(map[pcapverify.FlowKey]attribution.Result)
 
-	onTCPPacket := func(srcIP string, srcPort uint16, dstIP string, dstPort uint16) {
-		var serverFlow pcapverify.FlowKey
-		if srcPort == port {
-			serverFlow = pcapverify.FlowKey{
-				SrcIP:   srcIP,
-				SrcPort: srcPort,
-				DstIP:   dstIP,
-				DstPort: dstPort,
-			}
-		} else if dstPort == port {
-			serverFlow = pcapverify.FlowKey{
-				SrcIP:   dstIP,
-				SrcPort: dstPort,
-				DstIP:   srcIP,
-				DstPort: srcPort,
-			}
-		} else {
+	onTCPPacket := func(srcIP string, srcPort uint16, dstIP string, dstPort uint16, payloadLen int) {
+		// Only attribute when observing a server -> client packet with non-empty application/TLS payload.
+		// At this point the server has accepted the connection and is actively transmitting ServerHello data,
+		// ensuring the accepted connection socket exists in /proc.
+		if srcPort != port || payloadLen == 0 {
 			return
+		}
+
+		serverFlow := pcapverify.FlowKey{
+			SrcIP:   srcIP,
+			SrcPort: srcPort,
+			DstIP:   dstIP,
+			DstPort: dstPort,
 		}
 
 		mu.Lock()
 		defer mu.Unlock()
-		if _, exists := attributionCache[serverFlow]; exists {
+		if existing, exists := attributionCache[serverFlow]; exists && (existing.Status == attribution.Attributed || existing.Status == attribution.Ambiguous) {
 			return
 		}
 		res, err := resolveLocalFlowAttribution(attribution.Flow{
@@ -63,7 +58,7 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 			DstIP:   serverFlow.DstIP,
 			DstPort: serverFlow.DstPort,
 		})
-		if err == nil && res.Status == attribution.Attributed {
+		if err == nil && (res.Status == attribution.Attributed || res.Status == attribution.Ambiguous) {
 			attributionCache[serverFlow] = res
 		}
 	}
@@ -117,7 +112,7 @@ func buildWireLiveEvidence(req VerificationRequest, inspection pcapverify.FlowIn
 		evidence.TLSVersion = inspection.Observation.TLSVersion
 	}
 
-	if snapshotted, ok := attributionCache[inspection.Flow]; ok && snapshotted.Status == attribution.Attributed {
+	if snapshotted, ok := attributionCache[inspection.Flow]; ok && (snapshotted.Status == attribution.Attributed || snapshotted.Status == attribution.Ambiguous) {
 		ApplyAttributionResult(&evidence, snapshotted)
 	} else {
 		attachWireFlowAttribution(&evidence, inspection.Flow)
