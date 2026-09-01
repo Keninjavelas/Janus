@@ -10,6 +10,13 @@ const (
 	Ambiguous    AttributionStatus = "AMBIGUOUS"
 )
 
+type AttributionBasis string
+
+const (
+	BasisConnectedSocket AttributionBasis = "CONNECTED_SOCKET"
+	BasisListenSocket    AttributionBasis = "LISTEN_SOCKET"
+)
+
 // Flow defines an observed TCP 4-tuple.
 // Note: For WIRE_LIVE target verification, workload attribution refers to the
 // local process owning the configured target/server endpoint, not whichever
@@ -27,12 +34,14 @@ type Workload struct {
 	Executable            string
 	ProcessStartTimeTicks uint64
 	SocketInode           string
+	AttributionBasis      AttributionBasis
 }
 
 type Result struct {
-	Status   AttributionStatus
-	Workload *Workload
-	Detail   string
+	Status           AttributionStatus
+	Workload         *Workload
+	AttributionBasis AttributionBasis
+	Detail           string
 }
 
 func executableName(target string) string {

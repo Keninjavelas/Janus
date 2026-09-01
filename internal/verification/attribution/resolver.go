@@ -43,16 +43,78 @@ func (r Resolver) ResolveLocalSourceOwner(flow Flow) (Result, error) {
 		return Result{}, err
 	}
 
+	// 1. Try exact connected socket with a valid non-zero inode
 	inodes := make([]string, 0, 1)
 	for _, socket := range sockets {
+		if socket.inode == "0" || socket.inode == "" {
+			continue
+		}
 		if socket.localIP == flowSrcIP && socket.localPort == flow.SrcPort &&
 			socket.remoteIP == flowDstIP && socket.remotePort == flow.DstPort {
 			inodes = append(inodes, socket.inode)
 		}
 	}
 
-	switch len(inodes) {
-	case 0:
+	if len(inodes) > 1 {
+		return Result{
+			Status:           Ambiguous,
+			AttributionBasis: BasisConnectedSocket,
+			Detail:           fmt.Sprintf("multiple socket inodes matched flow %s:%d->%s:%d: %s", flowSrcIP, flow.SrcPort, flowDstIP, flow.DstPort, strings.Join(inodes, ",")),
+		}, nil
+	}
+
+	if len(inodes) == 1 {
+		owners, err := r.findOwners(inodes[0])
+		if err != nil {
+			return Result{}, err
+		}
+		switch len(owners) {
+		case 1:
+			return Result{
+				Status:           Attributed,
+				AttributionBasis: BasisConnectedSocket,
+				Workload: &Workload{
+					PID:                   owners[0].pid,
+					Executable:            owners[0].executable,
+					ProcessStartTimeTicks: owners[0].processStartTimeTicks,
+					SocketInode:           owners[0].socketInode,
+					AttributionBasis:      BasisConnectedSocket,
+				},
+				Detail: fmt.Sprintf("resolved connected socket inode %s to pid %d", inodes[0], owners[0].pid),
+			}, nil
+		case 0:
+			// Connected socket inode is no longer process-owned; fall through to LISTEN socket
+		default:
+			details := make([]string, 0, len(owners))
+			for _, owner := range owners {
+				details = append(details, fmt.Sprintf("%d:%s", owner.pid, owner.executable))
+			}
+			return Result{
+				Status:           Ambiguous,
+				AttributionBasis: BasisConnectedSocket,
+				Detail:           fmt.Sprintf("multiple processes reference connected socket inode %s: %s", inodes[0], strings.Join(details, ",")),
+			}, nil
+		}
+	}
+
+	// 2. Fallback: resolve the target/server LISTEN socket on flow.SrcPort
+	listenInodes := make([]string, 0, 1)
+	seenInodes := make(map[string]bool)
+	for _, socket := range sockets {
+		if socket.inode == "0" || socket.inode == "" {
+			continue
+		}
+		if socket.localPort == flow.SrcPort && (socket.remotePort == 0 || socket.remoteIP == "0.0.0.0" || socket.remoteIP == "::") {
+			if socket.localIP == flowSrcIP || socket.localIP == "0.0.0.0" || socket.localIP == "::" {
+				if !seenInodes[socket.inode] {
+					seenInodes[socket.inode] = true
+					listenInodes = append(listenInodes, socket.inode)
+				}
+			}
+		}
+	}
+
+	if len(listenInodes) == 0 {
 		candidates := make([]string, 0)
 		for _, s := range sockets {
 			if s.localPort == flow.SrcPort || s.remotePort == flow.SrcPort || s.localPort == flow.DstPort || s.remotePort == flow.DstPort {
@@ -67,43 +129,51 @@ func (r Resolver) ResolveLocalSourceOwner(flow Flow) (Result, error) {
 			Status: Unattributed,
 			Detail: fmt.Sprintf("flow %s:%d->%s:%d was not present in proc socket tables (matching port candidates: %s)", flowSrcIP, flow.SrcPort, flowDstIP, flow.DstPort, candidateInfo),
 		}, nil
-	case 1:
-	default:
-		return Result{
-			Status: Ambiguous,
-			Detail: fmt.Sprintf("multiple socket inodes matched flow %s:%d->%s:%d: %s", flowSrcIP, flow.SrcPort, flowDstIP, flow.DstPort, strings.Join(inodes, ",")),
-		}, nil
 	}
 
-	owners, err := r.findOwners(inodes[0])
-	if err != nil {
-		return Result{}, err
+	seenPIDs := make(map[int]bool)
+	uniqueOwners := make([]socketOwner, 0)
+	for _, lInode := range listenInodes {
+		lOwners, err := r.findOwners(lInode)
+		if err != nil {
+			return Result{}, err
+		}
+		for _, o := range lOwners {
+			if !seenPIDs[o.pid] {
+				seenPIDs[o.pid] = true
+				uniqueOwners = append(uniqueOwners, o)
+			}
+		}
 	}
-	switch len(owners) {
+
+	switch len(uniqueOwners) {
 	case 0:
 		return Result{
 			Status: Unattributed,
-			Detail: fmt.Sprintf("socket inode %s no longer belongs to a live process", inodes[0]),
+			Detail: fmt.Sprintf("listening socket inode(s) %s on port %d no longer belong to a live process", strings.Join(listenInodes, ","), flow.SrcPort),
 		}, nil
 	case 1:
 		return Result{
-			Status: Attributed,
+			Status:           Attributed,
+			AttributionBasis: BasisListenSocket,
 			Workload: &Workload{
-				PID:                   owners[0].pid,
-				Executable:            owners[0].executable,
-				ProcessStartTimeTicks: owners[0].processStartTimeTicks,
-				SocketInode:           owners[0].socketInode,
+				PID:                   uniqueOwners[0].pid,
+				Executable:            uniqueOwners[0].executable,
+				ProcessStartTimeTicks: uniqueOwners[0].processStartTimeTicks,
+				SocketInode:           uniqueOwners[0].socketInode,
+				AttributionBasis:      BasisListenSocket,
 			},
-			Detail: fmt.Sprintf("resolved inode %s to pid %d", inodes[0], owners[0].pid),
+			Detail: fmt.Sprintf("resolved server endpoint %s:%d via listen socket inode %s to pid %d (%s)", flowSrcIP, flow.SrcPort, uniqueOwners[0].socketInode, uniqueOwners[0].pid, uniqueOwners[0].executable),
 		}, nil
 	default:
-		details := make([]string, 0, len(owners))
-		for _, owner := range owners {
+		details := make([]string, 0, len(uniqueOwners))
+		for _, owner := range uniqueOwners {
 			details = append(details, fmt.Sprintf("%d:%s", owner.pid, owner.executable))
 		}
 		return Result{
-			Status: Ambiguous,
-			Detail: fmt.Sprintf("multiple processes reference socket inode %s: %s", inodes[0], strings.Join(details, ",")),
+			Status:           Ambiguous,
+			AttributionBasis: BasisListenSocket,
+			Detail:           fmt.Sprintf("multiple processes reference listening socket(s) on port %d: %s", flow.SrcPort, strings.Join(details, ",")),
 		}, nil
 	}
 }

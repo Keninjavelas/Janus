@@ -23,6 +23,7 @@ type WorkloadMetadata struct {
 	Executable            string `json:"executable"`
 	ProcessStartTimeTicks uint64 `json:"process_start_time_ticks,omitempty"`
 	SocketInode           string `json:"socket_inode,omitempty"`
+	AttributionBasis      string `json:"attribution_basis,omitempty"`
 }
 
 const (
@@ -203,11 +204,17 @@ func ApplyAttributionResult(evidence *VerificationEvidence, result attribution.R
 		return
 	}
 
+	basis := string(result.AttributionBasis)
+	if basis == "" && result.Workload != nil {
+		basis = string(result.Workload.AttributionBasis)
+	}
+
 	evidence.Workload = &WorkloadMetadata{
 		PID:                   result.Workload.PID,
 		Executable:            result.Workload.Executable,
 		ProcessStartTimeTicks: result.Workload.ProcessStartTimeTicks,
 		SocketInode:           result.Workload.SocketInode,
+		AttributionBasis:      basis,
 	}
 }
 

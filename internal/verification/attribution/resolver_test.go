@@ -160,6 +160,47 @@ func TestResolveLocalSourceOwnerAmbiguous(t *testing.T) {
 	}
 }
 
+func TestResolveLocalSourceOwnerListenSocketFallback(t *testing.T) {
+	// Connection socket has vanished (or only inode=0 remains), but server's listen socket is active
+	resolver := NewResolver("/proc", fakeProcFS{
+		files: map[string]string{
+			"/proc/net/tcp": procTCPTable(
+				procTCPRow("127.0.0.1", 8443, "0.0.0.0", 0, "99887"), // LISTEN socket
+				procTCPRow("127.0.0.1", 8443, "127.0.0.1", 52314, "0"), // dead connection socket inode=0
+			),
+			"/proc/6331/stat": procStatRow(6331, "janus-server", 555555),
+		},
+		entries: map[string][]string{
+			"/proc":         {"6331"},
+			"/proc/6331/fd": {"3"},
+		},
+		links: map[string]string{
+			"/proc/6331/fd/3": "socket:[99887]",
+			"/proc/6331/exe":  "/usr/bin/janus-server",
+		},
+	})
+
+	result, err := resolver.ResolveLocalSourceOwner(Flow{
+		SrcIP: "127.0.0.1", SrcPort: 8443,
+		DstIP: "127.0.0.1", DstPort: 52314,
+	})
+	if err != nil {
+		t.Fatalf("resolve listen fallback: %v", err)
+	}
+	if result.Status != Attributed {
+		t.Fatalf("expected ATTRIBUTED, got %s (%s)", result.Status, result.Detail)
+	}
+	if result.AttributionBasis != BasisListenSocket {
+		t.Fatalf("expected LISTEN_SOCKET basis, got %s", result.AttributionBasis)
+	}
+	if result.Workload == nil || result.Workload.PID != 6331 || result.Workload.Executable != "janus-server" {
+		t.Fatalf("unexpected workload: %#v", result.Workload)
+	}
+	if result.Workload.SocketInode != "99887" {
+		t.Fatalf("expected socket inode 99887, got %q", result.Workload.SocketInode)
+	}
+}
+
 type fakeProcFS struct {
 	files   map[string]string
 	entries map[string][]string
