@@ -31,36 +31,63 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 
 	var mu sync.Mutex
 	attributionCache := make(map[pcapverify.FlowKey]attribution.Result)
+	flowWatchers := make(map[pcapverify.FlowKey]bool)
 
 	onTCPPacket := func(srcIP string, srcPort uint16, dstIP string, dstPort uint16, payloadLen int) {
-		// Only attribute when observing a server -> client packet with non-empty application/TLS payload.
-		// At this point the server has accepted the connection and is actively transmitting ServerHello data,
-		// ensuring the accepted connection socket exists in /proc.
-		if srcPort != port || payloadLen == 0 {
+		// Recognize connection involving target port and normalize as server -> client
+		var serverFlow pcapverify.FlowKey
+		if srcPort == port {
+			serverFlow = pcapverify.FlowKey{
+				SrcIP:   srcIP,
+				SrcPort: srcPort,
+				DstIP:   dstIP,
+				DstPort: dstPort,
+			}
+		} else if dstPort == port {
+			serverFlow = pcapverify.FlowKey{
+				SrcIP:   dstIP,
+				SrcPort: dstPort,
+				DstIP:   srcIP,
+				DstPort: srcPort,
+			}
+		} else {
 			return
-		}
-
-		serverFlow := pcapverify.FlowKey{
-			SrcIP:   srcIP,
-			SrcPort: srcPort,
-			DstIP:   dstIP,
-			DstPort: dstPort,
 		}
 
 		mu.Lock()
-		defer mu.Unlock()
-		if existing, exists := attributionCache[serverFlow]; exists && (existing.Status == attribution.Attributed || existing.Status == attribution.Ambiguous) {
+		if flowWatchers[serverFlow] {
+			mu.Unlock()
 			return
 		}
-		res, err := resolveLocalFlowAttribution(attribution.Flow{
+		flowWatchers[serverFlow] = true
+		mu.Unlock()
+
+		// Start bounded asynchronous watcher polling procfs while connection is establishing / alive
+		go func(flow attribution.Flow, key pcapverify.FlowKey) {
+			deadline := time.Now().Add(1200 * time.Millisecond)
+			for time.Now().Before(deadline) {
+				select {
+				case <-captureCtx.Done():
+					return
+				default:
+				}
+
+				res, err := resolveLocalFlowAttribution(flow)
+				if err == nil && (res.Status == attribution.Attributed || res.Status == attribution.Ambiguous) {
+					mu.Lock()
+					attributionCache[key] = res
+					mu.Unlock()
+					return
+				}
+
+				time.Sleep(5 * time.Millisecond)
+			}
+		}(attribution.Flow{
 			SrcIP:   serverFlow.SrcIP,
 			SrcPort: serverFlow.SrcPort,
 			DstIP:   serverFlow.DstIP,
 			DstPort: serverFlow.DstPort,
-		})
-		if err == nil && (res.Status == attribution.Attributed || res.Status == attribution.Ambiguous) {
-			attributionCache[serverFlow] = res
-		}
+		}, serverFlow)
 	}
 
 	inspections, err := pcapverify.InspectLiveCapture(captureCtx, pcapverify.LiveCaptureConfig{
@@ -80,7 +107,7 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 		return wireUnverifiedOutcome(req, withLiveCaptureDiagnostics("no tls server hello observed before capture ended", inspections.Diagnostics)), nil
 	}
 
-	evidence := buildWireLiveEvidence(req, inspection, inspections.Diagnostics, attributionCache)
+	evidence := buildWireLiveEvidence(req, inspection, inspections.Diagnostics, attributionCache, &mu)
 
 	if evidence.Status == Compliant {
 		evidence.ApplicationAccess = AccessAllowed
@@ -91,7 +118,7 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 	return VerificationOutcome{Evidence: evidence}, nil
 }
 
-func buildWireLiveEvidence(req VerificationRequest, inspection pcapverify.FlowInspection, diagnostics pcapverify.LiveCaptureDiagnostics, attributionCache map[pcapverify.FlowKey]attribution.Result) VerificationEvidence {
+func buildWireLiveEvidence(req VerificationRequest, inspection pcapverify.FlowInspection, diagnostics pcapverify.LiveCaptureDiagnostics, attributionCache map[pcapverify.FlowKey]attribution.Result, mu *sync.Mutex) VerificationEvidence {
 	observed := ""
 	detail := inspection.Detail
 	if inspection.Status == pcapverify.StatusUnverified {
@@ -112,11 +139,33 @@ func buildWireLiveEvidence(req VerificationRequest, inspection pcapverify.FlowIn
 		evidence.TLSVersion = inspection.Observation.TLSVersion
 	}
 
-	if snapshotted, ok := attributionCache[inspection.Flow]; ok && (snapshotted.Status == attribution.Attributed || snapshotted.Status == attribution.Ambiguous) {
-		ApplyAttributionResult(&evidence, snapshotted)
+	var result attribution.Result
+	mu.Lock()
+	cached, ok := attributionCache[inspection.Flow]
+	mu.Unlock()
+
+	if ok && (cached.Status == attribution.Attributed || cached.Status == attribution.Ambiguous) {
+		result = cached
 	} else {
-		attachWireFlowAttribution(&evidence, inspection.Flow)
+		// Final direct lookup fallback
+		res, err := resolveLocalFlowAttribution(attribution.Flow{
+			SrcIP:   inspection.Flow.SrcIP,
+			SrcPort: inspection.Flow.SrcPort,
+			DstIP:   inspection.Flow.DstIP,
+			DstPort: inspection.Flow.DstPort,
+		})
+		if err != nil {
+			if res.Status == "" {
+				res.Status = attribution.Unattributed
+			}
+			if res.Detail == "" {
+				res.Detail = err.Error()
+			}
+		}
+		result = res
 	}
+
+	ApplyAttributionResult(&evidence, result)
 	return evidence
 }
 
