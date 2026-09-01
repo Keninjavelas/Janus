@@ -1,66 +1,70 @@
-import { Shield, AlertTriangle, CheckCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ShieldAlert } from 'lucide-react';
 
 interface ThreatGaugeProps {
-  threatLevel: 'safe' | 'warning' | 'critical';
+  exposureLevel: 'safe' | 'warning' | 'critical';
+  classicalAssets: number;
+  quantumSafeAssets: number;
+  unknownAssets: number;
 }
 
-export function ThreatGauge({ threatLevel }: ThreatGaugeProps) {
-  const getThreatInfo = () => {
-    switch (threatLevel) {
+export function ThreatGauge({ exposureLevel, classicalAssets, quantumSafeAssets, unknownAssets }: ThreatGaugeProps) {
+  const info = (() => {
+    switch (exposureLevel) {
       case 'safe':
         return {
-          color: 'bg-green-500',
-          textColor: 'text-green-600',
+          color: 'bg-emerald-500',
+          textColor: 'text-emerald-700',
           icon: CheckCircle,
-          label: 'Safe',
-          description: 'All systems operating with quantum-safe algorithms',
+          label: 'Low Exposure',
+          description: 'Observed assets are predominantly quantum-safe and migration urgency is low.',
         };
       case 'warning':
         return {
-          color: 'bg-yellow-500',
-          textColor: 'text-yellow-600',
+          color: 'bg-amber-500',
+          textColor: 'text-amber-700',
           icon: AlertTriangle,
-          label: 'Warning',
-          description: 'Some systems using lower security levels',
+          label: 'Mixed Exposure',
+          description: 'Unknown or transitional assets remain and should be prioritized for assessment.',
         };
-      case 'critical':
+      default:
         return {
-          color: 'bg-red-500',
-          textColor: 'text-red-600',
-          icon: Shield,
-          label: 'Critical',
-          description: 'Classical algorithms detected - upgrade required',
+          color: 'bg-rose-600',
+          textColor: 'text-rose-700',
+          icon: ShieldAlert,
+          label: 'High Exposure',
+          description: 'Classical or high-priority assets remain in scope for migration and verification.',
         };
     }
-  };
+  })();
 
-  const threatInfo = getThreatInfo();
-  const Icon = threatInfo.icon;
+  const Icon = info.icon;
 
   return (
-    <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">Quantum Threat Level</h3>
-        <Icon className={`w-6 h-6 ${threatInfo.textColor}`} />
-      </div>
-      
-      <div className="flex items-center gap-6">
-        <div className={`w-32 h-32 rounded-full ${threatInfo.color} flex items-center justify-center shadow-lg`}>
-          <span className="text-white text-2xl font-bold">{threatInfo.label}</span>
+    <div className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
+      <div className="mb-5 flex items-center justify-between">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-stone-500">Quantum Exposure</p>
+          <h3 className="mt-1 text-xl font-semibold text-stone-900">{info.label}</h3>
         </div>
-        
-        <div className="flex-1">
-          <p className="text-gray-600 mb-2">{threatInfo.description}</p>
-          <div className="flex gap-2">
-            <div className={`h-2 flex-1 rounded-full ${threatLevel === 'safe' ? threatInfo.color : 'bg-gray-200'}`} />
-            <div className={`h-2 flex-1 rounded-full ${threatLevel === 'warning' || threatLevel === 'safe' ? threatInfo.color : 'bg-gray-200'}`} />
-            <div className={`h-2 flex-1 rounded-full ${threatLevel === 'critical' ? threatInfo.color : 'bg-gray-200'}`} />
-          </div>
-          <div className="flex justify-between text-xs text-gray-500 mt-1">
-            <span>Safe</span>
-            <span>Warning</span>
-            <span>Critical</span>
-          </div>
+        <div className={`rounded-full p-3 ${info.color}`}>
+          <Icon className="h-6 w-6 text-white" />
+        </div>
+      </div>
+
+      <p className="mb-6 text-sm leading-6 text-stone-600">{info.description}</p>
+
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-xl bg-stone-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-stone-500">Quantum-safe</p>
+          <p className="mt-2 text-2xl font-semibold text-emerald-700">{quantumSafeAssets}</p>
+        </div>
+        <div className="rounded-xl bg-stone-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-stone-500">Classical</p>
+          <p className="mt-2 text-2xl font-semibold text-rose-700">{classicalAssets}</p>
+        </div>
+        <div className="rounded-xl bg-stone-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-stone-500">Unknown</p>
+          <p className="mt-2 text-2xl font-semibold text-amber-700">{unknownAssets}</p>
         </div>
       </div>
     </div>

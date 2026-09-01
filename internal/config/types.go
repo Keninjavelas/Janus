@@ -4,8 +4,9 @@ package config
 import "time"
 
 type Policy struct {
-	Default Config `yaml:"default"`
-	Rules   []Rule `yaml:"rules"`
+	Metadata PolicyMetadata `yaml:"metadata,omitempty"`
+	Default  Config         `yaml:"default"`
+	Rules    []Rule         `yaml:"rules"`
 }
 
 type Config struct {
@@ -46,7 +47,13 @@ type LifecycleOverrides struct {
 
 // The loaded policy and a timestamp of last successful load
 type LoadedPolicy struct {
-	Policy   Policy
-	LoadedAt time.Time
-	Version  string
+	Policy        Policy               `json:"policy"`
+	LoadedAt      time.Time            `json:"loaded_at"`
+	Version       string               `json:"version"`
+	PolicyID      string               `json:"policy_id"`
+	CreatedAt     time.Time            `json:"created_at"`
+	Active        bool                 `json:"active"`
+	State         PolicyLifecycleState `json:"state"`
+	CanonicalHash string               `json:"canonical_hash"`
+	Signature     *PolicySignature     `json:"signature,omitempty"`
 }

@@ -8,7 +8,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -16,17 +15,20 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yourorg/janus/internal/verification/attribution"
 )
 
 func TestLiveWireVerificationCompliant(t *testing.T) {
 	requireLiveCapturePrivileges(t)
 
 	required := mustRequiredPosture(t)
-	outcome := runLiveWireScenario(t, liveWireScenario{
+	result := runLiveWireScenarioDetailed(t, liveWireScenario{
 		Required:     required,
 		ServerCurves: []string{"X25519MLKEM768"},
 		ClientCurves: []string{"X25519MLKEM768"},
 	})
+	outcome := result.Outcome
 
 	if outcome.Evidence.Status != Compliant {
 		t.Fatalf("expected %s, got %s (%s)", Compliant, outcome.Evidence.Status, outcome.Evidence.Details)
@@ -46,17 +48,19 @@ func TestLiveWireVerificationCompliant(t *testing.T) {
 	if outcome.Evidence.Flow == nil {
 		t.Fatal("expected flow metadata")
 	}
+	assertAttributedServerWorkload(t, outcome, result.ServerPID)
 }
 
 func TestLiveWireVerificationNonCompliant(t *testing.T) {
 	requireLiveCapturePrivileges(t)
 
 	required := mustRequiredPosture(t)
-	outcome := runLiveWireScenario(t, liveWireScenario{
+	result := runLiveWireScenarioDetailed(t, liveWireScenario{
 		Required:     required,
 		ServerCurves: []string{"X25519"},
 		ClientCurves: []string{"X25519"},
 	})
+	outcome := result.Outcome
 
 	if outcome.Evidence.Status != NonCompliant {
 		t.Fatalf("expected %s, got %s (%s)", NonCompliant, outcome.Evidence.Status, outcome.Evidence.Details)
@@ -67,6 +71,102 @@ func TestLiveWireVerificationNonCompliant(t *testing.T) {
 	if outcome.Evidence.ApplicationAccess != AccessDenied {
 		t.Fatalf("expected %s, got %s", AccessDenied, outcome.Evidence.ApplicationAccess)
 	}
+	assertAttributedServerWorkload(t, outcome, result.ServerPID)
+}
+
+func TestLiveWireVerificationPreservesCompliantCryptoWhenOwnerVanishes(t *testing.T) {
+	requireLiveCapturePrivileges(t)
+
+	required := mustRequiredPosture(t)
+	outcome := runLiveWireScenario(t, liveWireScenario{
+		Required:     required,
+		ServerCurves: []string{"X25519MLKEM768"},
+		ClientCurves: []string{"X25519MLKEM768"},
+		VerifierEnv:  []string{"JANUS_WIRE_ATTRIBUTION_OVERRIDE=UNATTRIBUTED"},
+	})
+
+	if outcome.Evidence.Status != Compliant {
+		t.Fatalf("expected %s, got %s (%s)", Compliant, outcome.Evidence.Status, outcome.Evidence.Details)
+	}
+	if outcome.Evidence.AttributionStatus != Unattributed {
+		t.Fatalf("expected %s, got %s", Unattributed, outcome.Evidence.AttributionStatus)
+	}
+	if outcome.Evidence.Workload != nil {
+		t.Fatalf("expected workload metadata to be absent, got %#v", outcome.Evidence.Workload)
+	}
+	if outcome.Evidence.AttributionDetail == "" {
+		t.Fatal("expected attribution detail for unattributed evidence")
+	}
+}
+
+func TestLiveWireVerificationPreservesNonCompliantCryptoWhenOwnerIsAmbiguous(t *testing.T) {
+	requireLiveCapturePrivileges(t)
+
+	required := mustRequiredPosture(t)
+	outcome := runLiveWireScenario(t, liveWireScenario{
+		Required:     required,
+		ServerCurves: []string{"X25519"},
+		ClientCurves: []string{"X25519"},
+		VerifierEnv:  []string{"JANUS_WIRE_ATTRIBUTION_OVERRIDE=AMBIGUOUS"},
+	})
+
+	if outcome.Evidence.Status != NonCompliant {
+		t.Fatalf("expected %s, got %s (%s)", NonCompliant, outcome.Evidence.Status, outcome.Evidence.Details)
+	}
+	if outcome.Evidence.AttributionStatus != Ambiguous {
+		t.Fatalf("expected %s, got %s", Ambiguous, outcome.Evidence.AttributionStatus)
+	}
+	if outcome.Evidence.Workload != nil {
+		t.Fatalf("expected ambiguous evidence to omit workload metadata, got %#v", outcome.Evidence.Workload)
+	}
+	if outcome.Evidence.AttributionDetail == "" {
+		t.Fatal("expected attribution detail for ambiguous evidence")
+	}
+}
+
+func TestLiveWireVerificationConcurrentScenariosStayCorrectlyAttributed(t *testing.T) {
+	requireLiveCapturePrivileges(t)
+
+	required := mustRequiredPosture(t)
+	type scenarioResult struct {
+		result liveWireScenarioResult
+		err    error
+	}
+
+	results := make(chan scenarioResult, 2)
+	run := func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				results <- scenarioResult{err: fmt.Errorf("scenario panic: %v", recovered)}
+			}
+		}()
+		results <- scenarioResult{
+			result: runLiveWireScenarioDetailed(t, liveWireScenario{
+				Required:     required,
+				ServerCurves: []string{"X25519MLKEM768"},
+				ClientCurves: []string{"X25519MLKEM768"},
+			}),
+		}
+	}
+
+	go run()
+	go run()
+
+	first := <-results
+	second := <-results
+	if first.err != nil {
+		t.Fatal(first.err)
+	}
+	if second.err != nil {
+		t.Fatal(second.err)
+	}
+
+	if first.result.ServerPID == second.result.ServerPID {
+		t.Fatalf("expected distinct helper processes, both scenarios attributed pid %d", first.result.ServerPID)
+	}
+
+	assertAttributedServerWorkload(t, first.result.Outcome, first.result.ServerPID)
+	assertAttributedServerWorkload(t, second.result.Outcome, second.result.ServerPID)
 }
 
 func TestLiveWireVerificationUnverifiedWhenNoTrafficObserved(t *testing.T) {
@@ -101,6 +201,8 @@ func TestWireLiveVerifierHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_JANUS_WIRE_VERIFIER_HELPER") != "1" {
 		return
 	}
+	restore := applyHelperAttributionOverride()
+	defer restore()
 	if err := RunWireVerifierCLI(os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
@@ -158,7 +260,8 @@ func TestWireLiveServerHelperProcess(t *testing.T) {
 	}
 
 	_ = tlsConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-	_, _ = io.Copy(io.Discard, tlsConn)
+	buf := make([]byte, 1)
+	_, _ = tlsConn.Read(buf)
 	os.Exit(0)
 }
 
@@ -203,9 +306,21 @@ type liveWireScenario struct {
 	Required     RequiredPosture
 	ServerCurves []string
 	ClientCurves []string
+	VerifierEnv  []string
+}
+
+type liveWireScenarioResult struct {
+	Outcome   VerificationOutcome
+	ServerPID int
+	ClientPID int
 }
 
 func runLiveWireScenario(t *testing.T, scenario liveWireScenario) VerificationOutcome {
+	t.Helper()
+	return runLiveWireScenarioDetailed(t, scenario).Outcome
+}
+
+func runLiveWireScenarioDetailed(t *testing.T, scenario liveWireScenario) liveWireScenarioResult {
 	t.Helper()
 
 	iface := mustLoopbackInterface(t)
@@ -244,6 +359,7 @@ func runLiveWireScenario(t *testing.T, scenario liveWireScenario) VerificationOu
 		"GO_WANT_JANUS_WIRE_VERIFIER_HELPER=1",
 		"JANUS_WIRE_READY_FILE="+readyFile,
 	)
+	verifierCmd.Env = append(verifierCmd.Env, scenario.VerifierEnv...)
 	verifierCmd.Stdin = bytes.NewReader(payload)
 	var verifierStdout bytes.Buffer
 	var verifierStderr bytes.Buffer
@@ -260,11 +376,11 @@ func runLiveWireScenario(t *testing.T, scenario liveWireScenario) VerificationOu
 		"JANUS_HELPER_CURVES=" + strings.Join(scenario.ClientCurves, ","),
 	})
 
-	if err := clientCmd.Wait(); err != nil {
-		t.Fatalf("client helper failed: %v: %s", err, clientStderr.String())
-	}
 	if err := verifierCmd.Wait(); err != nil {
 		t.Fatalf("verifier helper failed: %v: %s", err, verifierStderr.String())
+	}
+	if err := clientCmd.Wait(); err != nil {
+		t.Fatalf("client helper failed: %v: %s", err, clientStderr.String())
 	}
 	if err := serverCmd.Wait(); err != nil {
 		t.Fatalf("server helper failed: %v: %s", err, serverStderr.String())
@@ -274,7 +390,11 @@ func runLiveWireScenario(t *testing.T, scenario liveWireScenario) VerificationOu
 	if err := json.Unmarshal(verifierStdout.Bytes(), &outcome); err != nil {
 		t.Fatalf("decode verifier outcome: %v", err)
 	}
-	return outcome
+	return liveWireScenarioResult{
+		Outcome:   outcome,
+		ServerPID: serverCmd.Process.Pid,
+		ClientPID: clientCmd.Process.Pid,
+	}
 }
 
 func runWireVerifierProcess(t *testing.T, req VerificationRequest) VerificationOutcome {
@@ -413,5 +533,57 @@ func requireLiveCapturePrivileges(t *testing.T) {
 func killProcess(process *os.Process) {
 	if process != nil {
 		_ = process.Kill()
+	}
+}
+
+func assertAttributedServerWorkload(t *testing.T, outcome VerificationOutcome, serverPID int) {
+	t.Helper()
+
+	if outcome.Evidence.AttributionStatus != Attributed {
+		t.Fatalf("expected %s, got %s (%s)", Attributed, outcome.Evidence.AttributionStatus, outcome.Evidence.AttributionDetail)
+	}
+	if outcome.Evidence.Workload == nil {
+		t.Fatal("expected workload attribution metadata")
+	}
+	if outcome.Evidence.Workload.PID != serverPID {
+		t.Fatalf("expected server pid %d, got %#v", serverPID, outcome.Evidence.Workload)
+	}
+	if outcome.Evidence.Workload.Executable == "" {
+		t.Fatalf("expected executable metadata, got %#v", outcome.Evidence.Workload)
+	}
+	if outcome.Evidence.Workload.ProcessStartTimeTicks == 0 {
+		t.Fatalf("expected process start ticks, got %#v", outcome.Evidence.Workload)
+	}
+	if outcome.Evidence.Workload.SocketInode == "" {
+		t.Fatalf("expected socket inode metadata, got %#v", outcome.Evidence.Workload)
+	}
+}
+
+func applyHelperAttributionOverride() func() {
+	override := os.Getenv("JANUS_WIRE_ATTRIBUTION_OVERRIDE")
+	if override == "" {
+		return func() {}
+	}
+
+	previous := resolveLocalFlowAttribution
+	switch override {
+	case "UNATTRIBUTED":
+		resolveLocalFlowAttribution = func(flow attribution.Flow) (attribution.Result, error) {
+			return attribution.Result{
+				Status: attribution.Unattributed,
+				Detail: fmt.Sprintf("override forced unattributed ownership for %s:%d->%s:%d", flow.SrcIP, flow.SrcPort, flow.DstIP, flow.DstPort),
+			}, nil
+		}
+	case "AMBIGUOUS":
+		resolveLocalFlowAttribution = func(flow attribution.Flow) (attribution.Result, error) {
+			return attribution.Result{
+				Status: attribution.Ambiguous,
+				Detail: fmt.Sprintf("override forced ambiguous ownership for %s:%d->%s:%d", flow.SrcIP, flow.SrcPort, flow.DstIP, flow.DstPort),
+			}, nil
+		}
+	}
+
+	return func() {
+		resolveLocalFlowAttribution = previous
 	}
 }

@@ -82,8 +82,20 @@ func InspectLiveCapture(ctx context.Context, cfg LiveCaptureConfig) (LiveCapture
 		}
 
 		packet := gopacket.NewPacket(data, handle.LinkType(), gopacket.NoCopy)
-		if packet.Layer(layers.LayerTypeTCP) != nil {
+		tcpLayer := packet.Layer(layers.LayerTypeTCP)
+		if tcpLayer != nil {
 			packetStats.TCPPacketsSeen++
+			if cfg.OnTCPPacket != nil {
+				tcp := tcpLayer.(*layers.TCP)
+				payloadLen := len(tcp.Payload)
+				if ip4Layer := packet.Layer(layers.LayerTypeIPv4); ip4Layer != nil {
+					ip4 := ip4Layer.(*layers.IPv4)
+					cfg.OnTCPPacket(ip4.SrcIP.String(), uint16(tcp.SrcPort), ip4.DstIP.String(), uint16(tcp.DstPort), payloadLen)
+				} else if ip6Layer := packet.Layer(layers.LayerTypeIPv6); ip6Layer != nil {
+					ip6 := ip6Layer.(*layers.IPv6)
+					cfg.OnTCPPacket(ip6.SrcIP.String(), uint16(tcp.SrcPort), ip6.DstIP.String(), uint16(tcp.DstPort), payloadLen)
+				}
+			}
 		}
 
 		if err := writer.WritePacket(ci, data); err != nil {

@@ -6,14 +6,23 @@ import (
 	"time"
 
 	pb "github.com/yourorg/janus/api/proto/v1"
+	"github.com/yourorg/janus/internal/verification/attribution"
 )
 
 type ComplianceStatus string
 type ApplicationAccess string
+type AttributionStatus string
 
 type FlowMetadata struct {
 	Src string `json:"src"`
 	Dst string `json:"dst"`
+}
+
+type WorkloadMetadata struct {
+	PID                   int    `json:"pid"`
+	Executable            string `json:"executable"`
+	ProcessStartTimeTicks uint64 `json:"process_start_time_ticks,omitempty"`
+	SocketInode           string `json:"socket_inode,omitempty"`
 }
 
 const (
@@ -23,6 +32,10 @@ const (
 
 	AccessAllowed ApplicationAccess = "ALLOWED"
 	AccessDenied  ApplicationAccess = "DENIED"
+
+	Attributed   AttributionStatus = "ATTRIBUTED"
+	Unattributed AttributionStatus = "UNATTRIBUTED"
+	Ambiguous    AttributionStatus = "AMBIGUOUS"
 )
 
 type RequiredPosture struct {
@@ -31,21 +44,25 @@ type RequiredPosture struct {
 }
 
 type VerificationEvidence struct {
-	DecisionID        string            `json:"decision_id"`
-	Required          string            `json:"required"`
-	Observed          string            `json:"observed"`
-	Status            ComplianceStatus  `json:"status"`
-	ApplicationAccess ApplicationAccess `json:"application_access"`
-	Source            string            `json:"source"`
-	ConnectionID      string            `json:"connection_id"`
-	Timestamp         time.Time         `json:"timestamp"`
-	PolicyVersion     string            `json:"policy_version"`
-	TLSVersion        string            `json:"tls_version,omitempty"`
-	CipherSuite       string            `json:"cipher_suite,omitempty"`
-	Details           string            `json:"details,omitempty"`
-	ObservationLevel  string            `json:"observation_level,omitempty"`
-	CaptureInterface  string            `json:"interface,omitempty"`
-	Flow              *FlowMetadata     `json:"flow,omitempty"`
+	DecisionID           string            `json:"decision_id"`
+	Required             string            `json:"required"`
+	Observed             string            `json:"observed"`
+	Status               ComplianceStatus  `json:"status"`
+	ApplicationAccess    ApplicationAccess `json:"application_access"`
+	Source               string            `json:"source"`
+	ConnectionID         string            `json:"connection_id"`
+	Timestamp            time.Time         `json:"timestamp"`
+	PolicyVersion        string            `json:"policy_version"`
+	TLSVersion           string            `json:"tls_version,omitempty"`
+	CipherSuite          string            `json:"cipher_suite,omitempty"`
+	CertificateSignature string            `json:"certificate_signature,omitempty"`
+	Details              string            `json:"details,omitempty"`
+	ObservationLevel     string            `json:"observation_level,omitempty"`
+	CaptureInterface     string            `json:"interface,omitempty"`
+	Flow                 *FlowMetadata     `json:"flow,omitempty"`
+	AttributionStatus    AttributionStatus `json:"attribution_status,omitempty"`
+	AttributionDetail    string            `json:"attribution_detail,omitempty"`
+	Workload             *WorkloadMetadata `json:"workload,omitempty"`
 }
 
 type VerificationRequest struct {
@@ -92,6 +109,9 @@ func BuildEvidence(required RequiredPosture, decisionID string, observed string,
 	if state != nil {
 		evidence.TLSVersion = tls.VersionName(state.Version)
 		evidence.CipherSuite = tls.CipherSuiteName(state.CipherSuite)
+		if len(state.PeerCertificates) > 0 {
+			evidence.CertificateSignature = state.PeerCertificates[0].SignatureAlgorithm.String()
+		}
 	}
 
 	switch {
@@ -168,6 +188,40 @@ func withFallbackDetail(detail string, fallback string) string {
 		return detail
 	}
 	return fallback
+}
+
+func ApplyAttributionResult(evidence *VerificationEvidence, result attribution.Result) {
+	if evidence == nil {
+		return
+	}
+
+	evidence.AttributionStatus = mapAttributionStatus(result.Status)
+	evidence.AttributionDetail = result.Detail
+	evidence.Workload = nil
+
+	if result.Workload == nil {
+		return
+	}
+
+	evidence.Workload = &WorkloadMetadata{
+		PID:                   result.Workload.PID,
+		Executable:            result.Workload.Executable,
+		ProcessStartTimeTicks: result.Workload.ProcessStartTimeTicks,
+		SocketInode:           result.Workload.SocketInode,
+	}
+}
+
+func mapAttributionStatus(status attribution.AttributionStatus) AttributionStatus {
+	switch status {
+	case attribution.Attributed:
+		return Attributed
+	case attribution.Unattributed:
+		return Unattributed
+	case attribution.Ambiguous:
+		return Ambiguous
+	default:
+		return ""
+	}
 }
 
 func (e VerificationEvidence) String() string {

@@ -3,8 +3,6 @@ package config
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"io"
 	"sync"
 	"time"
@@ -58,13 +56,12 @@ func unmarshalPolicy(v *viper.Viper) error {
 	if err := yaml.NewDecoder(bytes.NewReader(buf)).Decode(&p); err != nil {
 		return err
 	}
-	sum := sha256.Sum256(buf)
-	policyMu.Lock()
-	loadedPolicy = &LoadedPolicy{
-		Policy:   p,
-		LoadedAt: time.Now(),
-		Version:  hex.EncodeToString(sum[:]),
+	compiled, err := CompilePolicy(p, time.Now())
+	if err != nil {
+		return err
 	}
+	policyMu.Lock()
+	loadedPolicy = compiled
 	policyMu.Unlock()
 	logger.Info().Msg("policy loaded successfully")
 	return nil
@@ -118,6 +115,15 @@ func GetPolicyVersion() string {
 		return ""
 	}
 	return loadedPolicy.Version
+}
+
+func GetLoadedPolicy() LoadedPolicy {
+	policyMu.RLock()
+	defer policyMu.RUnlock()
+	if loadedPolicy == nil {
+		return LoadedPolicy{}
+	}
+	return *loadedPolicy
 }
 
 // ReloadPolicy manually triggers a policy reload

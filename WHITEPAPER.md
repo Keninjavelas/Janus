@@ -1,93 +1,45 @@
-# Janus - Research Platform Brief
+# Janus Whitepaper
 
-**Version:** 1.1  
-**Date:** 2026-08-07
+## Thesis
 
-## Executive summary
+Janus explores whether a crypto-agility control plane can do more than recommend algorithms. The central research question is whether one system can discover cryptographic posture, attribute it to workloads, assess migration urgency, derive required posture, verify actual negotiated behavior independently, and preserve trustworthy evidence across that loop.
 
-Janus is a cloud-native research platform for adaptive post-quantum cryptographic policy. It evaluates contextual inputs and returns a recommended cryptographic posture, exposes those decisions over service APIs, and provides a dashboard for simulation, review, and observability.
+## Result
 
-The central idea is crypto agility, not a claim that the repository already delivers full wire-level zero-trust enforcement. The current codebase demonstrates policy selection, control-plane plumbing, and PQC experimentation. The next milestone is to connect those decisions to protocol enforcement and independently verify the negotiated result.
+As of Wednesday, August 12, 2026, Janus demonstrates an integrated research architecture with these layers:
 
-## What Janus is today
+1. Discovery and CBOM inventory
+2. Workload attribution
+3. Deterministic quantum-risk assessment
+4. Policy derivation and validated bundle lifecycle
+5. Enforcement-oriented verification paths
+6. Passive wire verification
+7. Audit integrity and migration planning
 
-- A policy decision engine with hot-reloadable YAML rules
-- A gRPC and REST service for evaluation and management
-- A demo UI for simulation, metrics, and policy editing
-- An Envoy integration path that can propagate recommendations downstream
-- A liboqs-backed experimentation layer for `ML-KEM-*` operations
+## What Janus Proves
 
-## What Janus is not yet
+- A required post-quantum TLS posture can be derived from policy.
+- A real TLS 1.3 connection can be verified as compliant, non-compliant, or unverifiable.
+- Passive wire evidence can identify negotiated `X25519` vs `X25519MLKEM768`.
+- Linux source-side attribution can bind a specific observed flow to a specific local workload.
+- Discovery inventory can turn cryptographic observations into a machine-readable CBOM.
+- Risk can be prioritized deterministically and explained rather than guessed by opaque AI scoring.
+- Migration success can be tied to observed evidence rather than configuration intent alone.
+- An append-only audit hash chain can make record tampering detectable.
 
-- A complete policy administrator and policy enforcement point
-- Proof that `X-PQC-Recommended` changed the negotiated handshake
-- A production-hardened PQC enforcement stack
-- A signed and tamper-evident policy distribution system
-- A cryptographic inventory or CBOM platform
+## What Janus Does Not Claim
 
-## Current architecture
+- production-ready zero-trust enforcement across arbitrary infrastructure
+- universal workload identity across all orchestration systems
+- complete autonomous network discovery across an enterprise
+- hardened PKI-backed signing infrastructure
+- authoritative policy activation by AI
 
-```text
-Client
-  -> Envoy/ext_authz
-  -> Janus gRPC decision engine
-  -> decision payload
-  -> downstream advisory handling
-```
+## Design Principles
 
-This is useful for experimentation, but it is not enough to claim verified post-quantum enforcement.
-
-## Target architecture
-
-```text
-Identity, posture, sensitivity, lifetime, risk, capability
-  -> Janus policy engine
-  -> signed policy decision
-  -> policy administrator
-  -> TLS or mTLS enforcement layer
-  -> negotiated cryptographic posture
-  -> independent verification
-  -> downgrade detection, audit, migration tracking
-```
-
-## Security boundaries
-
-### Advisory versus enforcement
-
-The current Wasm path injects advisory metadata. That metadata can help downstream systems reason about policy intent, but it does not itself prove cryptographic negotiation.
-
-### AI assistance
-
-The AI feature is intentionally limited to drafting YAML. Human review in the policy editor is required before a policy is applied.
-
-### Standards naming
-
-This repository now uses standardized names such as `ML-KEM-768`, `ML-DSA-65`, and `X25519MLKEM768` in public-facing docs and examples. Where the current `liboqs-go` binding still expects legacy identifiers internally, Janus translates them in code.
-
-## Recommended engineering priorities
-
-1. Close `v0.3` with authoritative Linux CI evidence for the enforcement and verification slice.
-2. Move from direct subprocess TLS observation to deployment-boundary attestation in `v0.4`.
-3. Sign and version policies, then simulate and review before rollout.
-4. Replace simplified attributes with stronger identity and posture sources.
-5. Add cryptographic discovery, CBOM generation, and migration planning.
-6. Strengthen cache invalidation and failure semantics.
-
-## Evaluation plan
-
-Strong future evaluation should answer:
-
-- What overhead does adaptive cryptographic policy introduce?
-- Can Janus detect and block downgrade from hybrid to classical modes?
-- How quickly can policy changes respond to algorithm deprecation?
-- How accurately can Janus identify high-priority migration targets?
-- Which compatibility and latency tradeoffs appear under different postures?
-
-## Operational status
-
-Janus should currently be presented as a production-oriented research platform and reference implementation, not as a finished production system.
-
-## Related documents
-
-- [README.md](C:\Users\aryan\OneDrive\Desktop\Janus\README.md)
-- [THREAT_MODEL.md](C:\Users\aryan\OneDrive\Desktop\Janus\THREAT_MODEL.md)
+- never guess security state
+- separate protocol metadata from runtime capability
+- separate cryptographic compliance from workload attribution
+- fail closed on ambiguity
+- treat AI as advisory only
+- preserve provenance across discovery, decision, verification, and migration

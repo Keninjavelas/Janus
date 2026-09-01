@@ -17,8 +17,8 @@ export function Sidebar() {
   return (
     <div className="w-64 bg-slate-900 text-white min-h-screen p-4">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-purple-400">Janus</h1>
-        <p className="text-sm text-slate-400">PQC Engine Dashboard</p>
+        <h1 className="text-2xl font-bold text-orange-300">Janus</h1>
+        <p className="text-sm text-slate-400">Research Crypto-Agility Control Plane</p>
       </div>
 
       <nav className="space-y-2">
@@ -29,10 +29,10 @@ export function Sidebar() {
           return (
             <button
               key={item.id}
-              onClick={() => setCurrentView(item.id as any)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                isActive
-                  ? 'bg-purple-600 text-white'
+                onClick={() => setCurrentView(item.id as any)}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                  isActive
+                  ? 'bg-orange-500 text-white'
                   : 'text-slate-300 hover:bg-slate-800'
               }`}
             >
