@@ -31,9 +31,26 @@ func InspectLiveCapture(ctx context.Context, cfg LiveCaptureConfig) (LiveCapture
 		cfg.PollTimeout = livePollTimeout
 	}
 
-	handle, err := gopcap.OpenLive(cfg.Interface, cfg.SnapLen, cfg.Promiscuous, cfg.PollTimeout)
+	inactive, err := gopcap.NewInactiveHandle(cfg.Interface)
 	if err != nil {
-		return LiveCaptureResult{}, fmt.Errorf("open live capture on %s: %w", cfg.Interface, err)
+		return LiveCaptureResult{}, fmt.Errorf("create inactive pcap handle on %s: %w", cfg.Interface, err)
+	}
+	defer inactive.CleanUp()
+
+	if err := inactive.SetSnapLen(int(cfg.SnapLen)); err != nil {
+		return LiveCaptureResult{}, fmt.Errorf("set snaplen on %s: %w", cfg.Interface, err)
+	}
+	if err := inactive.SetPromisc(cfg.Promiscuous); err != nil {
+		return LiveCaptureResult{}, fmt.Errorf("set promisc on %s: %w", cfg.Interface, err)
+	}
+	if err := inactive.SetTimeout(cfg.PollTimeout); err != nil {
+		return LiveCaptureResult{}, fmt.Errorf("set timeout on %s: %w", cfg.Interface, err)
+	}
+	_ = inactive.SetImmediateMode(true)
+
+	handle, err := inactive.Activate()
+	if err != nil {
+		return LiveCaptureResult{}, fmt.Errorf("activate live capture on %s: %w", cfg.Interface, err)
 	}
 	defer handle.Close()
 
