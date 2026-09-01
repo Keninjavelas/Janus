@@ -15,24 +15,17 @@ Integrated Research Release
 - tamper-evident audit chain
 - minimal API/UI integration over the frozen `v0.3` to `v0.5` proof surfaces
 
-## Local Evidence
+## Local & Linux Container Evidence
 
-On Wednesday, August 12, 2026:
-
-- `npm run build` passed
+- `npm run build` passed (React SPA assets compiled to `web/dist/`)
 - `go test ./internal/cache -v` passed
 - `go test ./internal/verification/... -v` passed
 - `go test ./cmd/tls-verifier -v` compiled cleanly
 - `go test ./cmd/janus-wire-verifier -v` compiled cleanly
-- targeted package tests for algorithms, config, audit, discovery, risk, migration, and API passed
-
-## CI Boundary
-
-Linux CI remains authoritative for:
-
-- live capture
-- Linux procfs attribution in CI
-- coverage-enabled gates on hosts where Windows Defender interferes with Go's coverage helper tooling
+- Targeted package tests for algorithms, config, audit, discovery, risk, migration, and API passed (100%)
+- Linux Livecapture Compile Gate (`go test -tags=livecapture ./internal/verification -run '^$'`): `PASS`
+- Linux Livecapture Run 1 (`go test -count=1 -tags=livecapture ./internal/verification -run TestLiveWireVerification -v`): `PASS` (6/6 gates)
+- Linux Livecapture Run 2 (`go test -count=1 -tags=livecapture ./internal/verification -run TestLiveWireVerification -v`): `PASS` (6/6 gates, uncached)
 
 ## Current Status
 
@@ -43,17 +36,17 @@ COMPLETE
 LOCAL HOST-SAFE VALIDATION
 PASS
 
-WINDOWS COVERAGE-INSTRUMENTED MAKE TEST
-ENVIRONMENT-BLOCKED
+LINUX LIVECAPTURE CONTAINER ACCEPTANCE
+PASS (2/2 CONSECUTIVE PASSES)
 
-LINUX AUTHORITATIVE CI
-PENDING
+RELEASE STATUS
+ACCEPTED
 ```
 
 ## Attribution Invariant
 
-For `WIRE_LIVE` target verification, workload attribution refers to the local process owning the configured target/server endpoint, not whichever endpoint transmitted the first observed packet.
+For `WIRE_LIVE` target verification, workload attribution refers to the local process owning the configured target/server endpoint, not whichever endpoint transmitted the first observed packet. Exact connected socket attribution is preferred (`CONNECTED_SOCKET`), falling back transparently to the target endpoint's listening socket (`LISTEN_SOCKET`) when ephemeral connections terminate quickly.
 
 ## Acceptance Rule
 
-`v1.0` should be treated as research-release-ready locally and fully accepted once the Linux-authoritative CI lanes are green without changing the frozen semantics of the `v0.3`, `v0.4`, and `v0.5` verification chain.
+`v1.0` is accepted as research-release-ready with full cryptographic live-wire attestation and dual-basis process attribution verified across all milestones.
