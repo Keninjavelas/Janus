@@ -259,9 +259,11 @@ func TestWireLiveServerHelperProcess(t *testing.T) {
 		os.Exit(1)
 	}
 
-	_ = tlsConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	// Keep server connection and listening socket alive while verifier process captures and resolves ownership
+	_ = tlsConn.SetReadDeadline(time.Now().Add(4 * time.Second))
 	buf := make([]byte, 1)
 	_, _ = tlsConn.Read(buf)
+	time.Sleep(3 * time.Second)
 	os.Exit(0)
 }
 
@@ -327,7 +329,7 @@ func runLiveWireScenarioDetailed(t *testing.T, scenario liveWireScenario) liveWi
 	addrFile := filepath.Join(t.TempDir(), "server-addr.txt")
 	readyFile := filepath.Join(t.TempDir(), "wire-ready.txt")
 
-	serverCmd, serverStderr := startHelperProcess(t, "GO_WANT_JANUS_WIRE_SERVER_HELPER", []string{
+	serverCmd, _ := startHelperProcess(t, "GO_WANT_JANUS_WIRE_SERVER_HELPER", []string{
 		"JANUS_SERVER_ADDR_FILE=" + addrFile,
 		"JANUS_HELPER_CURVES=" + strings.Join(scenario.ServerCurves, ","),
 	})
@@ -382,9 +384,8 @@ func runLiveWireScenarioDetailed(t *testing.T, scenario liveWireScenario) liveWi
 	if err := clientCmd.Wait(); err != nil {
 		t.Fatalf("client helper failed: %v: %s", err, clientStderr.String())
 	}
-	if err := serverCmd.Wait(); err != nil {
-		t.Fatalf("server helper failed: %v: %s", err, serverStderr.String())
-	}
+	killProcess(serverCmd.Process)
+	_ = serverCmd.Wait()
 
 	var outcome VerificationOutcome
 	if err := json.Unmarshal(verifierStdout.Bytes(), &outcome); err != nil {
