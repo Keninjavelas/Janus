@@ -35,6 +35,9 @@ func NewResolver(procRoot string, procFS procFS) Resolver {
 }
 
 func (r Resolver) ResolveLocalSourceOwner(flow Flow) (Result, error) {
+	flowSrcIP := canonicalIP(flow.SrcIP)
+	flowDstIP := canonicalIP(flow.DstIP)
+
 	sockets, err := r.loadSockets()
 	if err != nil {
 		return Result{}, err
@@ -42,23 +45,33 @@ func (r Resolver) ResolveLocalSourceOwner(flow Flow) (Result, error) {
 
 	inodes := make([]string, 0, 1)
 	for _, socket := range sockets {
-		if socket.localIP == flow.SrcIP && socket.localPort == flow.SrcPort &&
-			socket.remoteIP == flow.DstIP && socket.remotePort == flow.DstPort {
+		if socket.localIP == flowSrcIP && socket.localPort == flow.SrcPort &&
+			socket.remoteIP == flowDstIP && socket.remotePort == flow.DstPort {
 			inodes = append(inodes, socket.inode)
 		}
 	}
 
 	switch len(inodes) {
 	case 0:
+		candidates := make([]string, 0)
+		for _, s := range sockets {
+			if s.localPort == flow.SrcPort || s.remotePort == flow.SrcPort || s.localPort == flow.DstPort || s.remotePort == flow.DstPort {
+				candidates = append(candidates, fmt.Sprintf("%s:%d<->%s:%d(inode=%s)", s.localIP, s.localPort, s.remoteIP, s.remotePort, s.inode))
+			}
+		}
+		candidateInfo := "none"
+		if len(candidates) > 0 {
+			candidateInfo = strings.Join(candidates, "; ")
+		}
 		return Result{
 			Status: Unattributed,
-			Detail: "flow was not present in proc socket tables",
+			Detail: fmt.Sprintf("flow %s:%d->%s:%d was not present in proc socket tables (matching port candidates: %s)", flowSrcIP, flow.SrcPort, flowDstIP, flow.DstPort, candidateInfo),
 		}, nil
 	case 1:
 	default:
 		return Result{
 			Status: Ambiguous,
-			Detail: fmt.Sprintf("multiple socket inodes matched flow: %s", strings.Join(inodes, ",")),
+			Detail: fmt.Sprintf("multiple socket inodes matched flow %s:%d->%s:%d: %s", flowSrcIP, flow.SrcPort, flowDstIP, flow.DstPort, strings.Join(inodes, ",")),
 		}, nil
 	}
 
@@ -262,9 +275,9 @@ func parseSocketTable(payload []byte) ([]procSocket, error) {
 
 		sockets = append(sockets, procSocket{
 			inode:      fields[9],
-			localIP:    localIP,
+			localIP:    canonicalIP(localIP),
 			localPort:  localPort,
-			remoteIP:   remoteIP,
+			remoteIP:   canonicalIP(remoteIP),
 			remotePort: remotePort,
 		})
 	}
@@ -272,6 +285,14 @@ func parseSocketTable(payload []byte) ([]procSocket, error) {
 		return nil, err
 	}
 	return sockets, nil
+}
+
+func canonicalIP(s string) string {
+	ip := net.ParseIP(strings.TrimSpace(s))
+	if ip == nil {
+		return strings.TrimSpace(s)
+	}
+	return ip.String()
 }
 
 func decodeProcAddress(value string) (string, uint16, error) {

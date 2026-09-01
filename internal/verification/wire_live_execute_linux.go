@@ -34,23 +34,14 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 	flowWatchers := make(map[pcapverify.FlowKey]bool)
 
 	onTCPPacket := func(srcIP string, srcPort uint16, dstIP string, dstPort uint16, payloadLen int) {
-		// Recognize connection involving target port and normalize as server -> client
-		var serverFlow pcapverify.FlowKey
-		if srcPort == port {
-			serverFlow = pcapverify.FlowKey{
-				SrcIP:   srcIP,
-				SrcPort: srcPort,
-				DstIP:   dstIP,
-				DstPort: dstPort,
-			}
-		} else if dstPort == port {
-			serverFlow = pcapverify.FlowKey{
-				SrcIP:   dstIP,
-				SrcPort: dstPort,
-				DstIP:   srcIP,
-				DstPort: srcPort,
-			}
-		} else {
+		rawKey := pcapverify.FlowKey{
+			SrcIP:   srcIP,
+			SrcPort: srcPort,
+			DstIP:   dstIP,
+			DstPort: dstPort,
+		}
+		serverFlow, isTarget := CanonicalServerFlow(rawKey, port)
+		if !isTarget {
 			return
 		}
 
@@ -107,7 +98,7 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 		return wireUnverifiedOutcome(req, withLiveCaptureDiagnostics("no tls server hello observed before capture ended", inspections.Diagnostics)), nil
 	}
 
-	evidence := buildWireLiveEvidence(req, inspection, inspections.Diagnostics, attributionCache, &mu)
+	evidence := buildWireLiveEvidence(req, inspection, inspections.Diagnostics, attributionCache, &mu, port)
 
 	if evidence.Status == Compliant {
 		evidence.ApplicationAccess = AccessAllowed
@@ -118,7 +109,42 @@ func executeWireVerification(ctx context.Context, req VerificationRequest) (Veri
 	return VerificationOutcome{Evidence: evidence}, nil
 }
 
-func buildWireLiveEvidence(req VerificationRequest, inspection pcapverify.FlowInspection, diagnostics pcapverify.LiveCaptureDiagnostics, attributionCache map[pcapverify.FlowKey]attribution.Result, mu *sync.Mutex) VerificationEvidence {
+func CanonicalServerFlow(flow pcapverify.FlowKey, targetPort uint16) (pcapverify.FlowKey, bool) {
+	srcIP := canonicalIP(flow.SrcIP)
+	dstIP := canonicalIP(flow.DstIP)
+	if flow.SrcPort == targetPort {
+		return pcapverify.FlowKey{
+			SrcIP:   srcIP,
+			SrcPort: flow.SrcPort,
+			DstIP:   dstIP,
+			DstPort: flow.DstPort,
+		}, true
+	}
+	if flow.DstPort == targetPort {
+		return pcapverify.FlowKey{
+			SrcIP:   dstIP,
+			SrcPort: flow.DstPort,
+			DstIP:   srcIP,
+			DstPort: flow.SrcPort,
+		}, true
+	}
+	return pcapverify.FlowKey{
+		SrcIP:   srcIP,
+		SrcPort: flow.SrcPort,
+		DstIP:   dstIP,
+		DstPort: flow.DstPort,
+	}, false
+}
+
+func canonicalIP(s string) string {
+	ip := net.ParseIP(strings.TrimSpace(s))
+	if ip == nil {
+		return strings.TrimSpace(s)
+	}
+	return ip.String()
+}
+
+func buildWireLiveEvidence(req VerificationRequest, inspection pcapverify.FlowInspection, diagnostics pcapverify.LiveCaptureDiagnostics, attributionCache map[pcapverify.FlowKey]attribution.Result, mu *sync.Mutex, port uint16) VerificationEvidence {
 	observed := ""
 	detail := inspection.Detail
 	if inspection.Status == pcapverify.StatusUnverified {
@@ -139,9 +165,11 @@ func buildWireLiveEvidence(req VerificationRequest, inspection pcapverify.FlowIn
 		evidence.TLSVersion = inspection.Observation.TLSVersion
 	}
 
+	canonicalKey, _ := CanonicalServerFlow(inspection.Flow, port)
+
 	var result attribution.Result
 	mu.Lock()
-	cached, ok := attributionCache[inspection.Flow]
+	cached, ok := attributionCache[canonicalKey]
 	mu.Unlock()
 
 	if ok && (cached.Status == attribution.Attributed || cached.Status == attribution.Ambiguous) {
@@ -149,10 +177,10 @@ func buildWireLiveEvidence(req VerificationRequest, inspection pcapverify.FlowIn
 	} else {
 		// Final direct lookup fallback
 		res, err := resolveLocalFlowAttribution(attribution.Flow{
-			SrcIP:   inspection.Flow.SrcIP,
-			SrcPort: inspection.Flow.SrcPort,
-			DstIP:   inspection.Flow.DstIP,
-			DstPort: inspection.Flow.DstPort,
+			SrcIP:   canonicalKey.SrcIP,
+			SrcPort: canonicalKey.SrcPort,
+			DstIP:   canonicalKey.DstIP,
+			DstPort: canonicalKey.DstPort,
 		})
 		if err != nil {
 			if res.Status == "" {
