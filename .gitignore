@@ -1,1 +1,42 @@
+# Binaries and build artifacts
 bin/
+dist/
+build/
+*.exe
+*.test
+*.out
+
+# Node dependencies and build outputs
+node_modules/
+web/dist/
+web/node_modules/
+.npm/
+
+# Environment files and credentials
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+*.cert
+id_rsa*
+*.secret
+
+# Logs and temporary files
+*.log
+*.tmp
+tmp/
+scratch/
+coverage/
+.coverage
+coverage.out
+
+# IDE and OS metadata
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
